@@ -3,10 +3,60 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import numpy as np
 import mplhep as hep
+import argparse
+import os
+
+from wums import output_tools, plot_tools
 
 hep.style.use(hep.style.ROOT)
 
-exts = ["png", "pdf"]
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "-v",
+    "--verbose",
+    type=int,
+    default=3,
+    choices=[0, 1, 2, 3, 4],
+    help="Set verbosity level with logging, the larger the more verbose",
+)
+parser.add_argument(
+    "--noColorLogger", action="store_true", help="Do not use logging with colors"
+)
+parser.add_argument(
+    "-o",
+    "--outpath",
+    type=str,
+    default=os.path.expanduser("./test"),
+    help="Base path for output",
+)
+parser.add_argument(
+    "--title",
+    default="CMS",
+    type=str,
+    help="Title to be printed in upper left",
+)
+parser.add_argument(
+    "--subtitle",
+    default="Work in progress",
+    type=str,
+    help="Subtitle to be printed after title",
+)
+parser.add_argument("--titlePos", type=int, default=0, help="title position")
+parser.add_argument(
+    "--legPos", type=str, default="upper right", help="Set legend position"
+)
+parser.add_argument(
+    "--legSize",
+    type=str,
+    default="small",
+    help="Legend text size (small: axis ticks size, large: axis label size, number)",
+)
+parser.add_argument(
+    "--legCols", type=int, default=2, help="Number of columns in legend"
+)
+args = parser.parse_args()
+
+outdir = output_tools.make_plot_dir(args.outpath)
 
 skip_surface = True
 x_lim = ["2008-01-01", "2019-01-01"]
@@ -69,6 +119,9 @@ for key in ["A", "E", "C", "D"]:
 
     fig = plt.figure()
     ax = fig.add_subplot()
+    
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Magnet field [T]")
 
     # plot RMS
     for i, (start, stop) in enumerate(
@@ -99,16 +152,42 @@ for key in ["A", "E", "C", "D"]:
 
     ax.set_xlim(*x_lim)
     ax.set_ylim(y_min, y_max)
+
+    ax.get_yaxis().get_major_formatter().set_useOffset(False)
+
     # ax.set_ylim(y_min-y_range*0.1, y_max+y_range*0.1)
 
     # # plot individual events
     # if key in ["C", "D"]:
     #     ax.plot([], linestyle="--", color="black")
 
-    ax.legend()
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Magnet field [T]")
+    plot_tools.add_decor(
+        ax,
+        args.title,
+        args.subtitle,
+        data=True,
+        lumi=None,  # if args.dataName == "Data" and not args.noData else None,
+        loc=args.titlePos,
+        text_size=args.legSize,
+        no_energy=True
+    )
 
-    for ext in exts:
-        fig.savefig(f"nmr_channel_{key}.{ext}", bbox_inches="tight")
+    plot_tools.addLegend(
+        ax,            
+        ncols=args.legCols,
+        loc=args.legPos,
+        text_size=args.legSize,
+    )
 
+    outfile = f"nmr_channel_{key}"
+
+    plot_tools.save_pdf_and_png(outdir, outfile)
+
+    output_tools.write_index_and_log(
+        outdir,
+        outfile,
+        analysis_meta_info={
+
+        },
+        args=args,
+    )
