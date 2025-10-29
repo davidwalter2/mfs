@@ -43,7 +43,7 @@ parser.add_argument(
 )
 parser.add_argument("--titlePos", type=int, default=0, help="title position")
 parser.add_argument(
-    "--legPos", type=str, default="upper right", help="Set legend position"
+    "--legPos", type=str, default="best", help="Set legend position"
 )
 parser.add_argument(
     "--legSize",
@@ -54,14 +54,12 @@ parser.add_argument(
 parser.add_argument(
     "--legCols", type=int, default=2, help="Number of columns in legend"
 )
+parser.add_argument(
+    "--skipSurface", action="store_true", help="Skip surface measurement"
+)
 args = parser.parse_args()
 
 outdir = output_tools.make_plot_dir(args.outpath)
-
-skip_surface = True
-x_lim = ["2008-01-01", "2019-01-01"]
-x_lim = ["2008-01-01", "2026-01-01"]
-x_lim = [datetime.fromisoformat(x) for x in x_lim]
 
 df = pd.read_csv("data/NMR_tabulated.csv").fillna(0.0)
 
@@ -79,32 +77,17 @@ events = {
     "2022-01-01": "Back to origin Teslameter",
     }
 
+underground = datetime.fromisoformat("2006-01-01")
 run1_start = datetime.fromisoformat("2008-01-01")
 run2_start = datetime.fromisoformat("2014-01-01")
 run2_stop = datetime.fromisoformat("2019-01-01")
 run3_start = datetime.fromisoformat("2022-01-01")
 run3_stop = datetime.fromisoformat("2027-01-01")
 
-df_run1 = df.loc[(df["Date"]>run1_start) & (df["Date"]<run2_start)]
-df_run2 = df.loc[(df["Date"]>run2_start) & (df["Date"]<run2_stop)]
+y_key = lambda key: f"Channel {key} [T]"
+y_err_key = lambda key: f"Channel {key} err [T]"
 
-for key in ["A", "E", "C", "D"]:
-    print(f"Now at probe {key}")
-    y_key = f"Channel {key} [T]"
-    y_err_key = f"Channel {key} err [T]"
-
-    x = df["Date"]
-    y = df[y_key]
-    y_err = df[y_err_key]
-
-    current = df["Magnet current [A]"].values
-
-    if skip_surface:
-        x = x[1:]
-        y = y[1:]
-        y_err = y_err[1:]
-        current = current[1:]
-
+def make_plot(current, y, y_err, x, df, key):
     # error from current measurement
     current_err = 0.02
     current_rel_err = current_err / current
@@ -113,9 +96,11 @@ for key in ["A", "E", "C", "D"]:
     y *= 18164 / current
     y_err *= 18164 / current
 
-    y_min = min(y[y>1]-y_err[y>1])
-    y_max = max(y[y>1]+y_err[y>1])
-    # y_range = y_max - y_min
+    y_min = min(y[y!=0]-y_err[y!=0])
+    y_max = max(y[y!=0]+y_err[y!=0])
+
+    y_range = y_max - y_min
+    y_lim = [y_min - y_range*0.1, y_max + y_range * 0.1]
 
     fig = plt.figure()
     ax = fig.add_subplot()
@@ -124,21 +109,31 @@ for key in ["A", "E", "C", "D"]:
     ax.set_ylabel("Magnet field [T]")
 
     # plot RMS
-    for i, (start, stop) in enumerate(
-        [(run1_start, run2_start), 
+    mean_tmp = 0
+    for i, (start, stop) in enumerate([
+        (underground, run1_start),
+        (run1_start, run2_start),
         (run2_start, run2_stop), 
-        (run3_start, run3_stop)]
-    ):
-        y_run = df.loc[(df["Date"]>start) & (df["Date"]<stop), y_key].values
-        y_run = y_run[y_run > 0]
+        (run3_start, run3_stop)
+    ]):
+        if key == "AminusE":
+            y_run = np.diff(df.loc[(df["Date"]>start) & (df["Date"]<stop), [y_key("E"), y_key("A")]].values).squeeze()
+        else:
+            y_run = df.loc[(df["Date"]>start) & (df["Date"]<stop), y_key(key)].values
+        y_run = y_run[y_run != 0]
 
         if len(y_run) == 0:
             continue
 
         mean = np.mean(y_run)
         std = np.std(y_run)
-        print(f"Run {i+1}: mean={mean}; std={std}")
-        
+        print(f"Run {i}: mean={mean}; std={std}")
+
+        if mean != 0:
+            relDiff = (mean/mean_tmp-1) #* 1e5
+            print(f"Rel diff. = {relDiff}")
+        mean_tmp = mean
+
         ax.plot([start, stop], [mean, mean], marker="", linestyle="-", color="black")
         ax.fill_between([start,stop],[mean-std, mean-std],[mean+std, mean+std], alpha=0.25, color="black")
 
@@ -148,10 +143,10 @@ for key in ["A", "E", "C", "D"]:
 
     for evt_date, evt_note in events.items():
         date = datetime.fromisoformat(evt_date)
-        ax.plot([date,date], [y_min, y_max], linestyle="--", color="grey")
+        ax.plot([date,date], y_lim, linestyle="--", color="grey")
 
     ax.set_xlim(*x_lim)
-    ax.set_ylim(y_min, y_max)
+    ax.set_ylim(*y_lim)
 
     ax.get_yaxis().get_major_formatter().set_useOffset(False)
 
@@ -191,3 +186,53 @@ for key in ["A", "E", "C", "D"]:
         },
         args=args,
     )
+
+
+
+for key in ["A", "E", "C", "D"]:
+    print(f"Now at probe {key}")
+    x = df["Date"]
+    y = df[y_key(key)]
+    y_err = df[y_err_key(key)]
+
+    current = df["Magnet current [A]"].values
+
+    if key == "A":
+        if args.skipSurface:
+            x_lim = ["2008-01-01", "2026-01-01"]
+            x = x[1:]
+            y = y[1:]
+            y_err = y_err[1:]
+            current = current[1:]
+        else:
+            x_lim = ["2006-01-01", "2026-01-01"]
+    elif key == "E":
+        x_lim = ["2008-01-01", "2026-01-01"]
+    else:
+        x_lim = ["2008-01-01", "2019-01-01"]
+    x_lim = [datetime.fromisoformat(x) for x in x_lim]
+
+    make_plot(current, y, y_err, x, df, key)
+
+
+# plot difference between A and E
+y_key_A = f"Channel A [T]"
+y_err_key_A = f"Channel A err [T]"
+y_key_E = f"Channel E [T]"
+y_err_key_E = f"Channel E err [T]"
+
+mask = (df[y_key_E] != 0) & (df[y_key_A] != 0)
+
+df = df[mask]
+
+x = df["Date"]
+
+y = df[y_key("A")].values - df[y_key("E")].values
+y_err = (df[y_err_key("A")].values**2 + df[y_err_key("E")].values**2)**0.5
+
+current = df["Magnet current [A]"].values
+
+x_lim = ["2008-01-01", "2026-01-01"]
+x_lim = [datetime.fromisoformat(x) for x in x_lim]
+
+make_plot(current, y, y_err, x, df, "AminusE")
