@@ -5,5 +5,5 @@
 ```bash
 python -m venv env
 source env/bin/activate
-pip install numpy mplhep pandas wums hdf5 hdf5plugin lz4
+pip install numpy mplhep pandas wums h5py hdf5plugin lz4
 ```

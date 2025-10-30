@@ -5,6 +5,7 @@ import numpy as np
 import mplhep as hep
 import argparse
 import os
+import re
 
 from wums import output_tools, plot_tools
 
@@ -61,6 +62,35 @@ args = parser.parse_args()
 
 outdir = output_tools.make_plot_dir(args.outpath)
 
+
+def read_predictions(input_file):
+    pattern = re.compile(r"B=\s*\(([^)]+)\)")
+    B_values = {}
+    keys = ["A", "E", "C", "D"]
+
+    # Read file and extract matches
+    with open(input_file, "r") as f:
+        i = 0
+        for line in f:
+            match = pattern.search(line)
+            if match:
+                # Extract the numbers and split into floats
+                values = np.array([float(v.strip()) for v in match.group(1).split(",")])
+                B_values[keys[i]] = np.sum(values**2)**0.5 # take the magnitude
+                i += 1
+    return B_values
+
+# file with predictions from CMSSW
+predictions = {
+    "default": {
+        "values": {
+            datetime.fromisoformat("2017-01-01"): read_predictions("field_results_run2.txt")
+            },
+        "color":"blue",
+        "marker": "X"
+        },
+    }
+
 df = pd.read_csv("data/NMR_tabulated.csv").fillna(0.0)
 
 df["day"] = df["Date"].apply(lambda x: int(x[8:10]))
@@ -98,9 +128,6 @@ def make_plot(current, y, y_err, x, df, key):
 
     y_min = min(y[y!=0]-y_err[y!=0])
     y_max = max(y[y!=0]+y_err[y!=0])
-
-    y_range = y_max - y_min
-    y_lim = [y_min - y_range*0.1, y_max + y_range * 0.1]
 
     fig = plt.figure()
     ax = fig.add_subplot()
@@ -140,6 +167,25 @@ def make_plot(current, y, y_err, x, df, key):
     ax.plot(x, y, label="Measurement", marker="o", linestyle="", color="black")
     ax.errorbar(x, y, yerr=y_err, label="Measurement err", linestyle="", color="orange")
     ax.errorbar(x, y, yerr=y * current_rel_err, label="Current err", linestyle="", color="red")
+
+    for pred_label, pred_dict in predictions.items():
+        pred_times = []
+        pred_values = []
+        for pred_time, pred_items in pred_dict["values"].items():
+            if key == "AminusE":
+                pred_value = pred_items["A"] - pred_items["E"]
+            else:
+                pred_value = pred_items[key]
+            pred_values.append(pred_value)
+            pred_times.append(pred_time)
+
+        ax.plot(pred_times, pred_values, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
+
+        y_min = min(y_min, min(pred_values))
+        y_max = max(y_max, max(pred_values))
+
+    y_range = y_max - y_min
+    y_lim = [y_min - y_range*0.1, y_max + y_range * 0.1]
 
     for evt_date, evt_note in events.items():
         date = datetime.fromisoformat(evt_date)
