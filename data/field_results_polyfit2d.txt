@@ -1,0 +1,5 @@
+Field Nominal Value: 38
+Enter X Y Z (cm): At R=291.48 phi=-2.35735 B= (0,0,0) 
+Enter X Y Z (cm): At R=291.48 phi=2.35735 B= (0,0,0) 
+Enter X Y Z (cm): At R=71.3 phi=0 B= (-0.0445459,0,3.65241) 
+Enter X Y Z (cm): At R=70.9 phi=0 B= (0.0439671,0,3.65598)
