@@ -56,6 +56,13 @@ parser.add_argument(
     "--legCols", type=int, default=2, help="Number of columns in legend"
 )
 parser.add_argument(
+    "--rrange",
+    type=float,
+    nargs=2,
+    default=[0.9, 1.1],
+    help="y range for ratio plot",
+)
+parser.add_argument(
     "--skipSurface", action="store_true", help="Skip surface measurement"
 )
 args = parser.parse_args()
@@ -82,6 +89,22 @@ def read_predictions(input_file):
 
 # file with predictions from CMSSW
 predictions = {
+    "120812": {
+        "values": {
+            datetime.fromisoformat("2012-01-01"): read_predictions("data/field_results_120812_run1.txt"),
+            datetime.fromisoformat("2016-01-01"): read_predictions("data/field_results_120812_run2.txt")
+            },
+        "color":"cyan",
+        "marker": "D"
+        },
+    "130503": {
+        "values": {
+            datetime.fromisoformat("2012-01-01"): read_predictions("data/field_results_130503_run1.txt"),
+            datetime.fromisoformat("2016-01-01"): read_predictions("data/field_results_130503_run2.txt")
+            },
+        "color":"purple",
+        "marker": "*"
+        },
     "160812": {
         "values": {
             datetime.fromisoformat("2012-01-01"): read_predictions("data/field_results_160812_run1.txt"),
@@ -114,6 +137,9 @@ predictions = {
         "marker": "v"
         },
     }
+
+# times to compute the ratios to the measurements
+meas_times = [datetime.fromisoformat("2006-08-28"), datetime.fromisoformat("2012-01-01"), datetime.fromisoformat("2016-01-01"), datetime.fromisoformat("2024-01-01")]
 
 df = pd.read_csv("data/NMR_tabulated.csv").fillna(0.0)
 
@@ -153,16 +179,28 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
     y_max = max(y[y!=0]+y_err[y!=0])
 
     fig = plt.figure()
-    ax = fig.add_subplot()
-    
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Magnet field [T]")
+    ax1 = fig.add_subplot(6, 1, (1, 4))
+    ax2 = fig.add_subplot(6, 1, (5, 8))
+
+    ax2.set_xlabel("Date")
+    ax1.set_ylabel("Magnet field [T]")
+    ax2.set_ylabel("Ratio")
 
     # plot probes measured at lower current in grey
     masked_scaled = current != 18164
-    if sum(masked_scaled):
+    if key == "A":
         y_original_err = (y_err**2 + (y * current_rel_err)**2)**0.5
-        ax.errorbar(x[masked_scaled], y[masked_scaled], yerr=y_original_err[masked_scaled], marker=".", capsize=5, capthick=2, linestyle="", color="grey", label="Measurement (18160A)")
+        ax1.errorbar(
+            x[masked_scaled], 
+            y[masked_scaled], 
+            yerr=y_original_err[masked_scaled], 
+            marker=".", 
+            capsize=5, 
+            capthick=2, 
+            linestyle="", 
+            color="grey", 
+            label="Meas. (18160A)"
+            )
 
     # correct the current
     y *= 18164 / current
@@ -170,6 +208,7 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
     y_err = (y_err**2 + (y * current_rel_err)**2)**0.5
 
     # plot RMS
+    means = {}
     mean_tmp = 0
     for i, (start, stop) in enumerate([
         (underground_start, underground_stop),
@@ -197,11 +236,18 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
             print(f"Rel diff. = {relDiff}")
         mean_tmp = mean
 
-        ax.plot([start, stop], [mean, mean], marker="", linestyle="-", color="black")
-        ax.fill_between([start,stop],[mean-std, mean-std],[mean+std, mean+std], alpha=0.25, color="black")
+        ax1.plot([start, stop], [mean, mean], marker="", linestyle="-", color="black")
+        ax1.fill_between([start,stop],[mean-std, mean-std],[mean+std, mean+std], alpha=0.25, color="black")
+
+        # lower panel
+        ax2.fill_between([start,stop],[1-std, 1-std],[1+std, 1+std], alpha=0.25, color="black")
+
+        means[meas_times[i]] = mean
+
+    ax2.plot(x_lim, [1, 1], marker="", linestyle="-", color="black")
 
     # ax.plot(x, y, label="Measurement", marker="o", linestyle="", color="black")
-    ax.errorbar(x, y, yerr=y_err, label="Measurement", marker=".", capsize=5, capthick=2, linestyle="", color="black")
+    ax1.errorbar(x, y, yerr=y_err, label="Meas.", marker=".", capsize=5, capthick=2, linestyle="", color="black")
     # ax.errorbar(x, y, yerr=y * current_rel_err, label="Current err", linestyle="", color="red")
 
     for pred_label, pred_dict in predictions.items():
@@ -220,22 +266,35 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
             pred_times.append(pred_time)
 
         if len(pred_times) > 0:
-            ax.plot(pred_times, pred_values, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
+            ax1.plot(pred_times, pred_values, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
 
             y_min = min(y_min, min(pred_values))
             y_max = max(y_max, max(pred_values))
 
+            meas_means = np.array([means[t] for t in pred_times if t in means.keys()])
+    
+            meas_pred_times = np.array([t for t in pred_times if t in means.keys()])
+            meas_pred_values = np.array([v for t,v in zip(pred_times, pred_values) if t in means.keys()])
+
+            ax2.plot(meas_pred_times, meas_pred_values/meas_means, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"])
+
     y_range = y_max - y_min
-    y_lim = [y_min - y_range*0.1, y_max + y_range * 0.1]
+    y_lim = [y_min - y_range*0.4, y_max + y_range * 0.1]
 
     for evt_date, evt_note in events.items():
         date = datetime.fromisoformat(evt_date)
-        ax.plot([date,date], y_lim, linestyle="--", color="grey", zorder=0)
+        ax1.plot([date,date], [y_min, y_lim[1]], linestyle="--", color="grey", zorder=0)
 
-    ax.set_xlim(*x_lim)
-    ax.set_ylim(*y_lim)
+    ax1.set_xlim(*x_lim)
+    ax2.set_xlim(*x_lim)
+    ax1.set_ylim(*y_lim)
 
-    ax.get_yaxis().get_major_formatter().set_useOffset(False)
+    if args.rrange is not None:
+        ax2.set_ylim(*args.rrange)
+
+    ax1.set_xticklabels([])
+
+    ax1.get_yaxis().get_major_formatter().set_useOffset(False)
 
     # ax.set_ylim(y_min-y_range*0.1, y_max+y_range*0.1)
 
@@ -244,7 +303,7 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
     #     ax.plot([], linestyle="--", color="black")
 
     plot_tools.add_decor(
-        ax,
+        ax1,
         args.title,
         args.subtitle,
         data=True,
@@ -255,10 +314,10 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
     )
 
     title_right = f"Probe {key}" if title_right is None else title_right
-    ax.text(1.0, 1.0, title_right, ha='right', va='bottom', transform=plt.gca().transAxes,)
+    ax1.text(1.0, 1.0, title_right, ha='right', va='bottom', transform=ax1.transAxes)
 
     plot_tools.addLegend(
-        ax,            
+        ax1,            
         ncols=args.legCols,
         loc=args.legPos,
         text_size=args.legSize,
