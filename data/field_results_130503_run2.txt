@@ -1,6 +1,0 @@
-Field Nominal Value: 38
-Enter R Phi Z (cm): At R=206.345 phi=-1.66647 B= (6.00972e-05,0.000703139,3.85476)
-Enter R Phi Z (cm): At R=206.345 phi=1.66647 B= (-3.44521e-05,-0.000108738,3.85464)
-Enter R Phi Z (cm): At R=64.25 phi=-2.04937 B= (0.0180671,0.0348719,3.65471)
-Enter R Phi Z (cm): At R=64.25 phi=-2.04937 B= (-0.0178855,-0.0345245,3.65804)
-Enter X Y Z (cm): 

@@ -1,6 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import mplhep as hep
 import argparse
@@ -70,78 +70,105 @@ args = parser.parse_args()
 outdir = output_tools.make_plot_dir(args.outpath)
 
 
-def read_predictions(input_file):
-    pattern = re.compile(r"B=\s*\(([^)]+)\)")
+def read_predictions(input_file, opera=False):
+    if opera:
+        pattern = re.compile(
+            r"\*\*\* COMMENT \*+ / probe ([A-Z])[\s\S]*?BMOD = ([\d\.E\+\-]+)[\s\S]*?BZ = ([\d\.E\+\-]+)"
+        )
+    else:
+        pattern = re.compile(r"B=\s*\(([^)]+)\)")
+        pattern2 = re.compile(r"\|B\|\s*=\s*([0-9.+-Ee]+)")
     B_values = {}
     keys = ["A", "E", "C", "D"]
 
     # Read file and extract matches
     with open(input_file, "r") as f:
-        i = 0
-        for line in f:
-            match = pattern.search(line)
-            if match:
-                # Extract the numbers and split into floats
-                values = np.array([float(v.strip()) for v in match.group(1).split(",")])
-                B_values[keys[i]] = np.sum(values**2)**0.5 # take the magnitude
-                i += 1
+        if opera:
+            text = f.read()
+            matches = pattern.findall(text)
+            for probe, bmod, bz in matches:
+                if probe in keys:
+                    B_values[probe] = [None, None, float(bz), float(bmod)]
+        else:
+            i = 0
+            for line in f:
+                match = pattern.search(line)
+                if match:
+                    values = np.array([float(v.strip()) for v in match.group(1).split(",")])
+
+                    match2 = pattern2.search(line)
+                    if match2:
+                        mag = float(match2.group(1).strip())
+                    else:
+                        mag = np.sum(values**2)**0.5
+                    # Extract the numbers and split into floats
+                    B_values[keys[i]] = [*values, mag] # (Bx, By, Bz, |B|) take the magnitude
+                    i += 1
     return B_values
 
-# file with predictions from CMSSW
+
+data_dir = "data/nmr_probes"
+
+# file with predictions from CMSSW/ Opera 3D
 predictions = {
-    "120812": {
-        "values": {
-            datetime.fromisoformat("2012-01-01"): read_predictions("data/field_results_120812_run1.txt"),
-            datetime.fromisoformat("2016-01-01"): read_predictions("data/field_results_120812_run2.txt")
-            },
-        "color":"cyan",
-        "marker": "D"
-        },
-    "130503": {
-        "values": {
-            datetime.fromisoformat("2012-01-01"): read_predictions("data/field_results_130503_run1.txt"),
-            datetime.fromisoformat("2016-01-01"): read_predictions("data/field_results_130503_run2.txt")
-            },
-        "color":"purple",
-        "marker": "*"
-        },
-    "160812": {
-        "values": {
-            datetime.fromisoformat("2012-01-01"): read_predictions("data/field_results_160812_run1.txt"),
-            datetime.fromisoformat("2016-01-01"): read_predictions("data/field_results_160812_run2.txt")
-            },
-        "color":"green",
-        "marker": "X"
-        },
-    "170812": {
-        "values": {
-            datetime.fromisoformat("2006-08-28"): read_predictions("data/field_results_170812_sx5.txt"),
-            datetime.fromisoformat("2012-01-01"): read_predictions("data/field_results_170812_run1.txt"),
-            datetime.fromisoformat("2016-01-01"): read_predictions("data/field_results_170812_run2.txt")
-            },
-        "color":"blue",
-        "marker": "P"
-        },
     "PolyFit2D": {
         "values": {
-            datetime.fromisoformat("2006-08-28"): read_predictions("data/field_results_polyfit2d.txt"),
+            datetime.fromisoformat("2006-08-28"): read_predictions(f"{data_dir}/field_results_polyfit2d.txt"),
             },
         "color":"orange",
         "marker": "^"
         },
     "PolyFit3D": {
         "values": {
-            datetime.fromisoformat("2006-08-28"): read_predictions("data/field_results_polyfit3d.txt"),
+            datetime.fromisoformat("2006-08-28"): read_predictions(f"{data_dir}/field_results_polyfit3d.txt"),
             },
         "color":"red",
         "marker": "v"
+        },
+    "170812": {
+        "values": {
+            datetime.fromisoformat("2006-08-28"): read_predictions(f"{data_dir}/field_results_170812_sx5.txt"),
+            datetime.fromisoformat("2012-01-01"): read_predictions(f"{data_dir}/field_results_170812_run1.txt"),
+            datetime.fromisoformat("2016-01-01"): read_predictions(f"{data_dir}/field_results_170812_run2.txt")
+            },
+        "opera":{
+            datetime.fromisoformat("2006-08-28"): read_predictions(f"{data_dir}/field_results_170812_opera_sx5.txt", opera=True),
+            datetime.fromisoformat("2012-01-01"): read_predictions(f"{data_dir}/field_results_170812_opera_run1.txt", opera=True),
+            datetime.fromisoformat("2016-01-01"): read_predictions(f"{data_dir}/field_results_170812_opera_run2.txt", opera=True) 
+        },
+        "color":"blue",
+        "marker": "P"
+        },
+    "160812": {
+        "values": {
+            datetime.fromisoformat("2012-01-01"): read_predictions(f"{data_dir}/field_results_160812_run1.txt"),
+            datetime.fromisoformat("2016-01-01"): read_predictions(f"{data_dir}/field_results_160812_run2.txt")
+            },
+        "color":"green",
+        "marker": "X"
+        },
+    "130503": {
+        "values": {
+            datetime.fromisoformat("2012-01-01"): read_predictions(f"{data_dir}/field_results_130503_run1.txt"),
+            datetime.fromisoformat("2016-01-01"): read_predictions(f"{data_dir}/field_results_130503_run2.txt")
+            },
+        "color":"purple",
+        "marker": "*"
+        },
+    "120812": {
+        "values": {
+            datetime.fromisoformat("2012-01-01"): read_predictions(f"{data_dir}/field_results_120812_run1.txt"),
+            datetime.fromisoformat("2016-01-01"): read_predictions(f"{data_dir}/field_results_120812_run2.txt")
+            },
+        "color":"cyan",
+        "marker": "D"
         },
     }
 
 # times to compute the ratios to the measurements
 meas_times = [datetime.fromisoformat("2006-08-28"), datetime.fromisoformat("2012-01-01"), datetime.fromisoformat("2016-01-01"), datetime.fromisoformat("2024-01-01")]
 
-df = pd.read_csv("data/NMR_tabulated.csv").fillna(0.0)
+df = pd.read_csv(f"{data_dir}/NMR_tabulated.csv").fillna(0.0)
 
 df["day"] = df["Date"].apply(lambda x: int(x[8:10]))
 df["month"] = df["Date"].apply(lambda x: int(x[5:7]))
@@ -250,23 +277,44 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
     ax1.errorbar(x, y, yerr=y_err, label="Meas.", marker=".", capsize=5, capthick=2, linestyle="", color="black")
     # ax.errorbar(x, y, yerr=y * current_rel_err, label="Current err", linestyle="", color="red")
 
-    for pred_label, pred_dict in predictions.items():
+    for i, (pred_label, pred_dict) in enumerate(predictions.items()):
+        do_err = "opera" in pred_dict.keys()
         pred_times = []
         pred_values = []
+        pred_values_err = []
         for pred_time, pred_items in pred_dict["values"].items():
-            if key == "AminusE":
-                pred_value = pred_items["A"] - pred_items["E"]
-            elif key == "DminusC":
-                pred_value = pred_items["D"] - pred_items["C"]
+            if do_err:
+                opera = pred_dict["opera"][pred_time]
             else:
-                pred_value = pred_items[key]
+                opera = {}
+
+            if key == "AminusE":
+                pred_value = pred_items["A"][-1] - pred_items["E"][-1]
+                if do_err:
+                    pred_value_err = np.sqrt((opera["A"][-1] - pred_items["A"][-1])**2 + (opera["E"][-1] - pred_items["E"][-1])**2)
+            elif key == "DminusC":
+                pred_value = pred_items["D"][-1] - pred_items["C"][-1]
+                if do_err:
+                    pred_value_err = np.sqrt((opera["D"][-1] - pred_items["D"][-1])**2 + (opera["C"][-1] - pred_items["C"][-1])**2)
+            else:
+                pred_value = pred_items[key][-1]
+                if do_err:
+                    pred_value_err = abs(opera[key][-1] - pred_items[key][-1])
             if pred_value == 0:
                 continue
-            pred_values.append(pred_value)
+
             pred_times.append(pred_time)
+            pred_values.append(pred_value)
+            if do_err:
+                pred_values_err.append(pred_value_err)
+
+        time_offset = -timedelta(days=2*50) + timedelta(days=i*50)
 
         if len(pred_times) > 0:
-            ax1.plot(pred_times, pred_values, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
+            if do_err:
+                ax1.errorbar([t+ time_offset for t in pred_times], pred_values, yerr=pred_values_err, capsize=5, capthick=2, linestyle="", marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
+            else:
+                ax1.plot([t+ time_offset for t in pred_times], pred_values, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
 
             y_min = min(y_min, min(pred_values))
             y_max = max(y_max, max(pred_values))
@@ -276,7 +324,11 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
             meas_pred_times = np.array([t for t in pred_times if t in means.keys()])
             meas_pred_values = np.array([v for t,v in zip(pred_times, pred_values) if t in means.keys()])
 
-            ax2.plot(meas_pred_times, meas_pred_values/meas_means, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"])
+            if do_err:
+                meas_pred_values_err = np.array([v for t,v in zip(pred_times, pred_values_err) if t in means.keys()])
+                ax2.errorbar([t+ time_offset for t in meas_pred_times], meas_pred_values/meas_means, yerr=meas_pred_values_err/meas_means, capsize=5, capthick=2, linestyle="", marker=pred_dict["marker"], color=pred_dict["color"])
+            else:
+                ax2.plot([t+ time_offset for t in meas_pred_times], meas_pred_values/meas_means, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"])
 
     y_range = y_max - y_min
     y_lim = [y_min - y_range*0.4, y_max + y_range * 0.1]
@@ -340,8 +392,8 @@ for key in ["A", "E", "C", "D"]:
     print(f"Now at probe {key}")
     x = df["Date"]
     y = df[y_key(key)]
+    df.loc[df[y_err_key(key)] < 0.00003, y_err_key(key)] = 0.00003
     y_err = df[y_err_key(key)]
-    y_err[y_err < 0.00003] = 0.00003
 
     current = df["Magnet current [A]"].values
 
