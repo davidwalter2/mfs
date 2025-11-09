@@ -78,6 +78,7 @@ def read_predictions(input_file, opera=False):
     else:
         pattern = re.compile(r"B=\s*\(([^)]+)\)")
         pattern2 = re.compile(r"\|B\|\s*=\s*([0-9.+-Ee]+)")
+        pattern3 = re.compile(r"dB=\s*([0-9.+-Ee]+)")
     B_values = {}
     keys = ["A", "E", "C", "D"]
 
@@ -101,8 +102,15 @@ def read_predictions(input_file, opera=False):
                         mag = float(match2.group(1).strip())
                     else:
                         mag = np.sum(values**2)**0.5
+
+                    match3 = pattern3.search(line)
+                    if match3:
+                        err = float(match3.group(1).strip())
+                    else:
+                        err = 0
+                    
                     # Extract the numbers and split into floats
-                    B_values[keys[i]] = [*values, mag] # (Bx, By, Bz, |B|) take the magnitude
+                    B_values[keys[i]] = [*values, err, mag] # (Bx, By, Bz, |B|) take the magnitude
                     i += 1
     return B_values
 
@@ -198,6 +206,8 @@ y_err_key = lambda key: f"Channel {key} err [T]"
 def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
     x_lim = [datetime.fromisoformat(x) for x in x_lim]
 
+    ratio = False if "minus" in key else True
+
     # error from current measurement
     current_err = 0.02
     current_rel_err = current_err / current
@@ -211,7 +221,12 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
 
     ax2.set_xlabel("Date")
     ax1.set_ylabel("Magnet field [T]")
-    ax2.set_ylabel("Ratio")
+    if ratio:
+        ax2.set_ylabel("Model/Meas.")
+        ax2_center = 1
+    else:
+        ax2.set_ylabel("Model - Meas.")
+        ax2_center = 0
 
     # plot probes measured at lower current in grey
     masked_scaled = current != 18164
@@ -267,11 +282,11 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
         ax1.fill_between([start,stop],[mean-std, mean-std],[mean+std, mean+std], alpha=0.25, color="black")
 
         # lower panel
-        ax2.fill_between([start,stop],[1-std, 1-std],[1+std, 1+std], alpha=0.25, color="black")
+        ax2.fill_between([start,stop],[ax2_center-std, ax2_center-std],[ax2_center+std, ax2_center+std], alpha=0.25, color="black")
 
         means[meas_times[i]] = mean
 
-    ax2.plot(x_lim, [1, 1], marker="", linestyle="-", color="black")
+    ax2.plot(x_lim, [ax2_center, ax2_center], marker="", linestyle="-", color="black")
 
     # ax.plot(x, y, label="Measurement", marker="o", linestyle="", color="black")
     ax1.errorbar(x, y, yerr=y_err, label="Meas.", marker=".", capsize=5, capthick=2, linestyle="", color="black")
@@ -282,6 +297,7 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
         pred_times = []
         pred_values = []
         pred_values_err = []
+        pred_pos_errs = []
         for pred_time, pred_items in pred_dict["values"].items():
             if do_err:
                 opera = pred_dict["opera"][pred_time]
@@ -290,14 +306,17 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
 
             if key == "AminusE":
                 pred_value = pred_items["A"][-1] - pred_items["E"][-1]
+                pred_pos_err = (pred_items["A"][-2]**2 + pred_items["E"][-2]**2)**0.5
                 if do_err:
                     pred_value_err = np.sqrt((opera["A"][-1] - pred_items["A"][-1])**2 + (opera["E"][-1] - pred_items["E"][-1])**2)
             elif key == "DminusC":
                 pred_value = pred_items["D"][-1] - pred_items["C"][-1]
+                pred_pos_err = (pred_items["D"][-2]**2 + pred_items["C"][-2]**2)**0.5
                 if do_err:
                     pred_value_err = np.sqrt((opera["D"][-1] - pred_items["D"][-1])**2 + (opera["C"][-1] - pred_items["C"][-1])**2)
             else:
                 pred_value = pred_items[key][-1]
+                pred_pos_err = pred_items[key][-2]
                 if do_err:
                     pred_value_err = abs(opera[key][-1] - pred_items[key][-1])
             if pred_value == 0:
@@ -305,30 +324,77 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
 
             pred_times.append(pred_time)
             pred_values.append(pred_value)
+            pred_pos_errs.append(pred_pos_err)
             if do_err:
                 pred_values_err.append(pred_value_err)
 
-        time_offset = -timedelta(days=2*50) + timedelta(days=i*50)
+        pred_values = np.array(pred_values)
+        pred_times = np.array(pred_times)
+        pred_pos_errs = np.array(pred_pos_errs)
+        if do_err:
+            pred_values_err = np.array(pred_values_err)
+
+
+        time_offset = -timedelta(days=2*60) + timedelta(days=i*60)
 
         if len(pred_times) > 0:
             if do_err:
-                ax1.errorbar([t+ time_offset for t in pred_times], pred_values, yerr=pred_values_err, capsize=5, capthick=2, linestyle="", marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
+                ax1.errorbar(pred_times + time_offset, pred_values, yerr=pred_values_err, capsize=5, capthick=2, linestyle="", marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
             else:
-                ax1.plot([t+ time_offset for t in pred_times], pred_values, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
+                ax1.plot(pred_times + time_offset, pred_values, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"], label=pred_label)
 
-            y_min = min(y_min, min(pred_values))
-            y_max = max(y_max, max(pred_values))
+            y_min = np.min([y_min, min(pred_values), min(pred_values-pred_pos_errs)])
+            y_max = np.max([y_max, max(pred_values), max(pred_values+pred_pos_errs)])
 
             meas_means = np.array([means[t] for t in pred_times if t in means.keys()])
     
             meas_pred_times = np.array([t for t in pred_times if t in means.keys()])
             meas_pred_values = np.array([v for t,v in zip(pred_times, pred_values) if t in means.keys()])
 
+            if pred_pos_errs.sum()>0:
+                meas_pred_pos_errs = np.array([v for t,v in zip(pred_times, pred_pos_errs) if t in means.keys()])
+                dt = timedelta(days=40)
+                for t, v, e in zip(pred_times, pred_values, pred_pos_errs):
+                    ax1.fill_between(
+                        [t+time_offset - dt, t+time_offset + dt],
+                        [v - e, v - e],
+                        [v + e, v + e],
+                        alpha=0.5,
+                        color=pred_dict["color"]
+                        )
+
+                for t, v, e, m in zip(meas_pred_times, meas_pred_values, meas_pred_pos_errs, meas_means):
+                    if ratio:
+                        dn = [(v-e)/m, (v-e)/m]
+                        up = [(v+e)/m, (v+e)/m]
+                    else:
+                        dn = [(v-e)-m, (v-e)-m]
+                        up = [(v+e)-m, (v+e)-m]                        
+
+                    ax2.fill_between(
+                        [t+time_offset-dt, t+time_offset+dt],
+                        dn,
+                        up,
+                        alpha=0.5,
+                        color=pred_dict["color"]
+                        )
+            
+            if ratio:
+                y = meas_pred_values/meas_means
+                print(f"Model/Measurement({pred_label}) = {y}")
+            else:
+                y = meas_pred_values-meas_means
+
             if do_err:
                 meas_pred_values_err = np.array([v for t,v in zip(pred_times, pred_values_err) if t in means.keys()])
-                ax2.errorbar([t+ time_offset for t in meas_pred_times], meas_pred_values/meas_means, yerr=meas_pred_values_err/meas_means, capsize=5, capthick=2, linestyle="", marker=pred_dict["marker"], color=pred_dict["color"])
+                if ratio:
+                    y_err = meas_pred_values_err/meas_means
+                else:
+                    y_err = meas_pred_values_err
+
+                ax2.errorbar([t+ time_offset for t in meas_pred_times], y, yerr=y_err, capsize=5, capthick=2, linestyle="", marker=pred_dict["marker"], color=pred_dict["color"])
             else:
-                ax2.plot([t+ time_offset for t in meas_pred_times], meas_pred_values/meas_means, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"])
+                ax2.plot([t+ time_offset for t in meas_pred_times], y, linewidth=0, linestyle=None, marker=pred_dict["marker"], color=pred_dict["color"])
 
     y_range = y_max - y_min
     y_lim = [y_min - y_range*0.4, y_max + y_range * 0.1]
@@ -342,7 +408,7 @@ def make_plot(current, y, y_err, x, df, key, x_lim, title_right=None):
     ax1.set_ylim(*y_lim)
 
     if args.rrange is not None:
-        ax2.set_ylim(*args.rrange)
+        ax2.set_ylim(args.rrange[0] - (1-ax2_center), args.rrange[1] - (1-ax2_center))
 
     ax1.set_xticklabels([])
 
