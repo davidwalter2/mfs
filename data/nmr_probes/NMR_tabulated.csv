@@ -12,7 +12,7 @@ Date,Magnet current [A],Channel A [T],Channel A err [T],Channel E [T],Channel E 
 2012-09-25,18164,3.92145,0.00003,3.92098,0.00003,3.65747,0.00005,3.6612,0.00004,
 2012-12-17,18164,3.92143,0.00003,3.92095,0.00002,3.6575,0.00005,3.6611,0.00004,
 2013-02-18,18164,3.92143,0.00005,3.92095,0.00005,3.65747,0.00007,3.6611,0.00004,addition of YE4
-2014-11-11,18164,3.92158,0.00005,3.92112,0.00005,3.6563,0.00005,3.65993,0.00005,"changing the probe positions in LS1Probe C – from X=0.713, Y=0, Z=-2.839 m to X=0.6425, Y=0.10517, Z=-2.835 m; Probe D – from X=0.709, Y=0, Z=-2.839 m to X=0.6425, Y=0.10517, Z=-2.831 m."
+2014-11-11,18164,3.92158,0.00005,3.92112,0.00005,3.6563,0.00005,3.65993,0.00005,"changing the probe positions in LS1Probe C – from X=0.713, Y=0, Z=-2.839 m to X=0.6425, Y=0.10517, Z=-2.835 m; Probe D – from X=0.709, Y=0, Z=2.839 m to X=0.6425, Y=0.10517, Z=2.831 m."
 2016-05-26,18164,3.92157,0.00005,3.92108,0.00005,3.6562,0.00005,3.6599,0.00005,
 2016-10-28,18164,3.92154,0.00005,3.92108,0.00004,,,,,
 2017-05-08,18164,3.92165,0.00005,3.92118,0.00004,3.6563,0.00007,3.65999,0.00005,"Current measured with new DCCT electronics installed during EYETS 2016-2017, replacing the original electronics. The hardware (torus and coils) were not modified and kept in place on the busbars."
