@@ -32,6 +32,10 @@ import os
 from harmonic_basis import build_design_matrix, eval_field, param_list
 from cylindrical_basis import (build_design_matrix_cyl, eval_field_cyl,
                                 param_list_cyl, mode_label, parse_mode_label)
+from cylindrical_bessel_basis import (build_design_matrix_cjb, eval_field_cjb,
+                                       param_list_cjb,
+                                       mode_label as mode_label_cjb,
+                                       parse_mode_label as parse_mode_label_cjb)
 import zernike_basis
 
 
@@ -259,6 +263,114 @@ def save_results_cyl(output_path, coeffs, modes, info):
     print(f"Saved coefficients to {output_path}.npz")
 
 
+def fit_bessel(grid, n_max, m_max, R=None, components=('Bz',), tikhonov=0.0):
+    """Fit the J_m-Bessel + cosh/sinh basis to the grid data.
+
+    Parameters
+    ----------
+    grid       : dict from load_grid
+    n_max      : int    number of Bessel zeros per azimuthal order (1st..n_max-th zero of J_m)
+    m_max      : int    maximum azimuthal order m
+    R          : float  radial scale [cm]; Bessel zeros discretized as alpha_{m,n}/R.
+                        Default: max(r_cm) in the fitting domain.
+    components : tuple of str  components to fit simultaneously
+    tikhonov   : float  Tikhonov regularization strength λ
+
+    Returns
+    -------
+    coeffs, modes, info
+    """
+    r   = grid['r_cm']
+    phi = grid['phi']
+    z   = grid['z_cm']
+
+    if R is None:
+        R = float(np.max(r))
+        print(f"Auto R (radial scale): {R:.1f} cm")
+
+    n_modes = 1 + 2 * n_max * (1 + 2 * m_max)
+    print(f"Building J-Bessel design matrix: {len(r)} points, "
+          f"n_max={n_max}, m_max={m_max}, R={R:.1f} cm, "
+          f"components={components} → {len(r)*len(components)} rows × {n_modes} cols")
+
+    A, modes = build_design_matrix_cjb(r, phi, z, n_max, m_max, R, components=components)
+
+    col_norms = np.linalg.norm(A, axis=0)
+    col_norms = np.where(col_norms > 0, col_norms, 1.0)
+    A_scaled  = A / col_norms[np.newaxis, :]
+
+    comp_data = {'Bz': grid['Bz'], 'Br': grid['Br'], 'Bphi': grid['Bphi']}
+    b = np.concatenate([comp_data[c] for c in components])
+
+    if tikhonov > 0:
+        lam_sqrt = np.sqrt(tikhonov)
+        A_solve  = np.vstack([A_scaled, lam_sqrt * np.eye(n_modes)])
+        b_solve  = np.concatenate([b, np.zeros(n_modes)])
+        print(f"Solving with Tikhonov λ={tikhonov:.2e} (augmented shape {A_solve.shape})...")
+    else:
+        A_solve = A_scaled
+        b_solve = b
+        print(f"Solving least squares (matrix shape {A_scaled.shape})...")
+
+    coeffs_scaled, _, rank, sv = np.linalg.lstsq(A_solve, b_solve, rcond=None)
+    coeffs = coeffs_scaled / col_norms
+
+    cond = sv[0] / sv[-1] if len(sv) > 0 and sv[-1] > 0 else float('nan')
+    print(f"  Rank: {rank}/{n_modes}, condition number: {cond:.2e}")
+
+    b_fit = A @ coeffs
+    rms   = {}
+    n_pts = len(r)
+    for ic, comp in enumerate(components):
+        res = b[ic*n_pts:(ic+1)*n_pts] - b_fit[ic*n_pts:(ic+1)*n_pts]
+        rms[comp] = np.sqrt(np.mean(res**2))
+        print(f"  RMS residual {comp}: {rms[comp]*1000:.4f} mT")
+
+    info = {
+        'residuals': b - b_fit,
+        'rms': rms,
+        'condition_number': cond,
+        'rank': rank,
+        'singular_values': sv,
+        'n_points': n_pts,
+        'components': list(components),
+        'basis': 'bessel',
+        'n_max': n_max,
+        'm_max': m_max,
+        'R': R,
+        'col_norms': col_norms,
+        'tikhonov': tikhonov,
+    }
+    return coeffs, modes, info
+
+
+def save_results_bessel(output_path, coeffs, modes, info):
+    """Save J-Bessel fit results to a .npz file."""
+    param_strs = np.array([mode_label_cjb(n, m, cp, cz) for n, m, cp, cz in modes])
+    np.savez(
+        output_path,
+        coeffs=coeffs,
+        params=param_strs,
+        basis_type='bessel',
+        n_max=info['n_max'],
+        m_max=info['m_max'],
+        R=info['R'],
+        col_norms=info['col_norms'],
+        tikhonov=info['tikhonov'],
+        rms_Bz=info['rms'].get('Bz', np.nan),
+        rms_Br=info['rms'].get('Br', np.nan),
+        rms_Bphi=info['rms'].get('Bphi', np.nan),
+        condition_number=info['condition_number'],
+        components=info['components'],
+        rmax_cm=info.get('rmax_cm', np.nan),
+        zmax_cm=info.get('zmax_cm', np.nan),
+        rmax_sphere_cm=info.get('rmax_sphere_cm', np.nan),
+        rmin_sphere_cm=info.get('rmin_sphere_cm', np.nan),
+        exclude_vol_boundaries=info.get('exclude_vol_boundaries', False),
+    )
+    print(f"Saved coefficients to {output_path}.npz")
+
+
 def gl_point_weights(r_cm, z_cm, l_max, z0=0.0):
     """Gauss-Legendre correction weights for a uniform-z cylindrical grid.
 
@@ -285,7 +397,7 @@ def gl_point_weights(r_cm, z_cm, l_max, z0=0.0):
 
 
 def fit(grid, l_max, components=('Bz',), tikhonov=0.0, z0=0.0, tikhonov_power=0.0,
-        gl_weights=False, l_max_phi=None, n_max_sum=None, m_max_per_l=None):
+        gl_weights=False, l_max_phi=None, n_max_sum=None, m_max_per_l=None, r_scale=None):
     """Fit the harmonic basis to the grid data.
 
     Parameters
@@ -317,7 +429,8 @@ def fit(grid, l_max, components=('Bz',), tikhonov=0.0, z0=0.0, tikhonov_power=0.
     # r_scale: normalise R to [0,1] for numerical stability at high l
     # Use shifted z for the sphere radius calculation
     zp = z - z0
-    r_scale = float(np.max(np.sqrt(r**2 + zp**2)))
+    if r_scale is None:
+        r_scale = float(np.max(np.sqrt(r**2 + zp**2)))
     from harmonic_basis import param_list as _param_list
     n_params = len(_param_list(l_max, l_max_phi=l_max_phi, n_max_sum=n_max_sum,
                                m_max_per_l=m_max_per_l))
@@ -628,8 +741,9 @@ def main():
     parser.add_argument('-i', '--input', required=True,
                         help='Input grid file from dumpField_cfg.py')
     parser.add_argument('--basis', default='spherical',
-                        choices=['spherical', 'cylindrical', 'zernike'],
-                        help='Basis type (default: spherical)')
+                        choices=['spherical', 'cylindrical', 'bessel', 'zernike'],
+                        help='Basis type (default: spherical). '
+                             '"bessel" = J_m Bessel + cosh/sinh z (hyperbolic cylindrical)')
     parser.add_argument('--lmax', type=int, default=18,
                         help='[spherical] Maximum harmonic degree (default: 18)')
     parser.add_argument('--lmax-phi', type=int, default=None, dest='lmax_phi',
@@ -654,6 +768,9 @@ def main():
     parser.add_argument('--period', type=float, default=None,
                         help='[cylindrical] Fourier half-period L [cm] '
                              '(default: auto = max |z| in grid + 10%%)')
+    parser.add_argument('--rscale', type=float, default=None,
+                        help='[bessel] Radial scale R [cm] for Bessel zero discretisation '
+                             'k_{m,n} = alpha_{m,n}/R  (default: auto = max r in grid)')
     parser.add_argument('--components', nargs='+', default=['Bz'],
                         choices=['Bz', 'Br', 'Bphi'],
                         help='Field components to fit (default: Bz)')
@@ -760,6 +877,20 @@ def main():
             base = os.path.splitext(os.path.basename(args.input))[0]
             stem = f"{base}_coeffs_cyl_nmax{args.nmax}_mmax{args.mmax}"
         save_results_cyl(stem, coeffs, modes, info)
+    elif args.basis == 'bessel':
+        coeffs, modes, info = fit_bessel(
+            grid, args.nmax, args.mmax, R=args.rscale,
+            components=tuple(args.components),
+            tikhonov=args.tikhonov)
+        info['rmax_cm']            = args.rmax        if args.rmax        is not None else np.nan
+        info['zmax_cm']            = args.zmax        if args.zmax        is not None else np.nan
+        info['rmax_sphere_cm']     = args.rmax_sphere if args.rmax_sphere is not None else np.nan
+        info['rmin_sphere_cm']     = args.rmin_sphere if args.rmin_sphere is not None else np.nan
+        info['exclude_vol_boundaries'] = args.exclude_vol_boundaries
+        if stem is None:
+            base = os.path.splitext(os.path.basename(args.input))[0]
+            stem = f"data/fitresults/{base}_coeffs_bessel_nmax{args.nmax}_mmax{args.mmax}"
+        save_results_bessel(stem, coeffs, modes, info)
     else:
         m_max_per_l = parse_m_max_per_l(args.m_max_per_l) if args.m_max_per_l else None
         l_max_fit = args.nmax_sum if args.nmax_sum is not None else args.lmax
@@ -769,7 +900,8 @@ def main():
                                    gl_weights=args.gl_weights,
                                    l_max_phi=args.lmax_phi,
                                    n_max_sum=args.nmax_sum,
-                                   m_max_per_l=m_max_per_l)
+                                   m_max_per_l=m_max_per_l,
+                                   r_scale=args.rscale)
         info['rmax_cm'] = args.rmax if args.rmax is not None else np.nan
         info['zmax_cm'] = args.zmax if args.zmax is not None else np.nan
         info['rmax_sphere_cm'] = args.rmax_sphere if args.rmax_sphere is not None else np.nan

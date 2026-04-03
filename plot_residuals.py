@@ -81,6 +81,7 @@ def add_tracker_boundaries(ax):
 
 from harmonic_basis import eval_field
 from cylindrical_basis import eval_field_cyl, parse_mode_label
+from cylindrical_bessel_basis import eval_field_cjb, parse_mode_label as parse_mode_label_cjb
 from fit_field import load_grid, vol_boundary_mask, CMSSW_VOL_BOUNDARIES_CM, parse_m_max_per_l
 import zernike_basis
 
@@ -110,6 +111,22 @@ def load_fit(npz_path):
         meta = {
             'basis': 'cylindrical',
             'L':     float(d['L']),
+            'n_max': int(d['n_max']),
+            'm_max': int(d['m_max']),
+            'components':             list(d.get('components', ['Bz', 'Br', 'Bphi'])),
+            'rmax_cm':                _scalar('rmax_cm'),
+            'zmax_cm':                _scalar('zmax_cm'),
+            'rmax_sphere_cm':         _scalar('rmax_sphere_cm'),
+            'rmin_sphere_cm':         _scalar('rmin_sphere_cm'),
+            'exclude_vol_boundaries': bool(d['exclude_vol_boundaries']) if 'exclude_vol_boundaries' in d else False,
+        }
+        return coeffs, modes, meta
+
+    if basis_type == 'bessel':
+        modes = [parse_mode_label_cjb(s) for s in param_strs]
+        meta = {
+            'basis': 'bessel',
+            'R':     float(d['R']),
             'n_max': int(d['n_max']),
             'm_max': int(d['m_max']),
             'components':             list(d.get('components', ['Bz', 'Br', 'Bphi'])),
@@ -172,7 +189,11 @@ def load_fit(npz_path):
 def compute_residuals(grid, coeffs, params_or_modes, meta,
                       components=('Bz', 'Br', 'Bphi')):
     """Return dict of residual arrays (measured - predicted) in mT."""
-    if meta['basis'] == 'cylindrical':
+    if meta['basis'] == 'bessel':
+        pred = eval_field_cjb(coeffs, params_or_modes,
+                              grid['r_cm'], grid['phi'], grid['z_cm'],
+                              R=meta['R'], components=components)
+    elif meta['basis'] == 'cylindrical':
         pred = eval_field_cyl(coeffs, params_or_modes,
                               grid['r_cm'], grid['phi'], grid['z_cm'],
                               L=meta['L'], components=components)
@@ -303,6 +324,8 @@ def main():
                         help='Output PDF path (default: derived from --fit name)')
     parser.add_argument('--nbins', type=int, default=35,
                         help='Number of bins for profile plots')
+    parser.add_argument('--no-vol-boundaries', action='store_true',
+                        help='Suppress CMSSW volume boundary lines (use for PolyFit3D/smooth models)')
     args = parser.parse_args()
 
     # output path
@@ -315,7 +338,9 @@ def main():
     coeffs, params_or_modes, meta = load_fit(args.fit)
     components = list(meta.get('components', ['Bz', 'Br', 'Bphi']))
     basis = meta['basis']
-    if basis == 'cylindrical':
+    if basis == 'bessel':
+        lmax = f"bessel n_max={meta['n_max']} m_max={meta['m_max']} R={meta['R']:.0f}cm"
+    elif basis == 'cylindrical':
         lmax = f"cyl n_max={meta['n_max']} m_max={meta['m_max']}"
     elif basis == 'zernike':
         lmax = f"n_max={meta.get('n_max','?')} l_max={meta.get('l_max','?')}"
@@ -336,6 +361,7 @@ def main():
     rmax_sphere = args.rmax_sphere
     if np.isnan(rmax_sphere) and not np.isnan(meta.get('rmax_sphere_cm', np.nan)):
         rmax_sphere = meta['rmax_sphere_cm']
+    rmax_sphere = None if np.isnan(rmax_sphere) else rmax_sphere
     rmax_cm = None if np.isnan(meta.get('rmax_cm', np.nan)) else meta['rmax_cm']
     zmax_cm = None if np.isnan(meta.get('zmax_cm', np.nan)) else meta['zmax_cm']
     rmin_sphere = None if np.isnan(meta.get('rmin_sphere_cm', np.nan)) else meta['rmin_sphere_cm']
@@ -432,7 +458,8 @@ def main():
             make_2d_map(ax, z, r, residuals[comp], comp, r'$z$ [cm]', r'$r$ [cm]')
             ax.set_title(COMP_LABELS[comp])
             add_tracker_boundaries(ax)
-            add_volume_boundaries(ax, orientation='z-axis')
+            if not args.no_vol_boundaries:
+                add_volume_boundaries(ax, orientation='z-axis')
         plt.tight_layout(rect=[0, 0, 1, 0.93])
         pdf.savefig(fig); plt.close(fig)
 
@@ -447,7 +474,8 @@ def main():
             make_2d_map(ax, phi, z, residuals[comp], comp,
                         r'$\phi$ [rad]', r'$z$ [cm]')
             ax.set_title(COMP_LABELS[comp])
-            add_volume_boundaries(ax, orientation='z-yaxis')
+            if not args.no_vol_boundaries:
+                add_volume_boundaries(ax, orientation='z-yaxis')
         plt.tight_layout(rect=[0, 0, 1, 0.93])
         pdf.savefig(fig); plt.close(fig)
 
@@ -472,7 +500,8 @@ def main():
                 rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
                 ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
                         transform=ax.transAxes, fontsize=8, va='top')
-                add_volume_boundaries(ax, orientation='z-axis')
+                if not args.no_vol_boundaries:
+                    add_volume_boundaries(ax, orientation='z-axis')
             plt.tight_layout(rect=[0, 0, 1, 0.90])
             pdf.savefig(fig); plt.close(fig)
 
@@ -495,7 +524,8 @@ def main():
                 rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
                 ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
                         transform=ax.transAxes, fontsize=8, va='top')
-                add_volume_boundaries(ax, orientation='z-yaxis')
+                if not args.no_vol_boundaries:
+                    add_volume_boundaries(ax, orientation='z-yaxis')
             plt.tight_layout(rect=[0, 0, 1, 0.90])
             pdf.savefig(fig); plt.close(fig)
 

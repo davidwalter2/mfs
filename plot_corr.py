@@ -22,6 +22,7 @@ import matplotlib.colors as mcolors
 from fit_field import load_grid, CMSSW_VOL_BOUNDARIES_CM, parse_m_max_per_l
 from harmonic_basis import build_design_matrix, param_list
 from cylindrical_basis import build_design_matrix_cyl, parse_mode_label
+from cylindrical_bessel_basis import build_design_matrix_cjb
 import zernike_basis
 
 
@@ -69,7 +70,14 @@ def main():
 
     # ── build design matrix ──────────────────────────────────────────────────
     print('Building design matrix ...')
-    if basis_type == 'cylindrical':
+    if basis_type == 'bessel':
+        n_max = int(data['n_max'])
+        m_max = int(data['m_max'])
+        R     = float(data['R'])
+        print(f'J-Bessel: n_max={n_max}, m_max={m_max}, R={R:.1f} cm')
+        A, modes_rebuilt = build_design_matrix_cjb(
+            r, phi, z, n_max, m_max, R, components=tuple(components))
+    elif basis_type == 'cylindrical':
         n_max  = int(data['n_max'])
         m_max  = int(data['m_max'])
         L      = float(data['L'])
@@ -110,7 +118,7 @@ def main():
     print(f'Correlation matrix: {n_params}x{n_params}')
 
     # ── block boundaries for axis labelling ──────────────────────────────────
-    if basis_type == 'cylindrical':
+    if basis_type in ('cylindrical', 'bessel'):
         # Group by n (wavenumber index)
         block_index = {}
         for idx, (nv, mv, cphi, cz) in enumerate(modes_rebuilt):

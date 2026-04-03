@@ -29,6 +29,7 @@ Usage
 """
 
 import argparse
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -40,8 +41,8 @@ DEFAULT_TEXT_THRESHOLD = 1e-4
 # ── bubble size mapping ─────────────────────────────────────────────────────
 SIZE_LOG_MIN = -6     # log10(|coeff|) mapped to minimum dot size
 SIZE_LOG_MAX = 3      # log10(|coeff|) mapped to maximum dot size
-SIZE_PTS_MIN = 4      # pt²  (smallest visible dot)
-SIZE_PTS_MAX = 600    # pt²  (largest dot)
+SIZE_PTS_MIN = 8      # pt²  (smallest visible dot)
+SIZE_PTS_MAX = 1000   # pt²  (largest dot)
 
 
 def log_size(val, log_min=SIZE_LOG_MIN, log_max=SIZE_LOG_MAX,
@@ -104,6 +105,15 @@ def parse_params_zernike(params_arr):
     return out
 
 
+def _inset_colorbar(fig, ax, sc, label, fontsize=14):
+    """Place a colorbar inside the axes frame (upper-right corner)."""
+    cax = ax.inset_axes([0.91, 0.46, 0.025, 0.50])
+    cbar = fig.colorbar(sc, cax=cax)
+    cbar.set_label(label, fontsize=fontsize)
+    cbar.ax.tick_params(labelsize=fontsize - 2)
+    return cbar
+
+
 def _scatter_and_annotate(ax, xs, ys, vals, norm, cmap, text_thresh, fontsize=8):
     """Shared helper: black anchor dots, coloured bubbles, and text annotations.
 
@@ -111,7 +121,7 @@ def _scatter_and_annotate(ax, xs, ys, vals, norm, cmap, text_thresh, fontsize=8)
     are part of the basis (allowed to float), even when their fitted value is
     near zero.  The coloured bubble sits on top (zorder=3).
     """
-    ax.scatter(xs, ys, s=18, c='black', zorder=1, linewidths=0)
+    ax.scatter(xs, ys, s=30, c='black', zorder=1, linewidths=0)
     sizes = log_size(vals)
     sc = ax.scatter(xs, ys, s=sizes, c=vals, cmap=cmap, norm=norm,
                     edgecolors='none', zorder=3)
@@ -150,9 +160,7 @@ def plot_cylindrical(coeffs, modes, n_max, m_max, fit_path, text_thresh):
     norm = mcolors.SymLogNorm(linthresh=linthresh, vmin=-vmax, vmax=vmax, base=10)
     cmap = plt.get_cmap('RdBu_r')
 
-    fig_w = max(10, (2 * n_max + 2) * 0.7)
-    fig_h = max(6,  (2 * m_max + 2) * 0.7)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig, ax = plt.subplots(figsize=(16, 9))
 
     sc = _scatter_and_annotate(ax, xs, ys, vals, norm, cmap, text_thresh)
 
@@ -160,34 +168,32 @@ def plot_cylindrical(coeffs, modes, n_max, m_max, fit_path, text_thresh):
     ax.set_ylim(-m_max - 0.7, m_max + 0.7)
     xticks = list(range(-n_max, n_max + 1))
     ax.set_xticks(xticks)
-    ax.set_xticklabels([str(abs(x)) if x % 2 == 0 else '' for x in xticks], fontsize=10)
+    ax.set_xticklabels([str(abs(x)) if x % 2 == 0 else '' for x in xticks], fontsize=14)
     yticks = list(range(-m_max, m_max + 1))
     ax.set_yticks(yticks)
-    ax.set_yticklabels([str(abs(y)) for y in yticks], fontsize=10)
+    ax.set_yticklabels([str(abs(y)) for y in yticks], fontsize=14)
 
-    ax.set_xlabel(r'$n$  (negative = z-antisymmetric,  positive = z-symmetric)', fontsize=12)
-    ax.set_ylabel(r'$m$  (negative = sine,  positive = cosine)', fontsize=12)
+    ax.set_xlabel(r'$n$  (negative = z-antisymmetric,  positive = z-symmetric)', fontsize=16)
+    ax.set_ylabel(r'$m$  (negative = sine,  positive = cosine)', fontsize=16)
     ax.set_title(
         f'Cylindrical coefficients   $n_{{\\max}}={n_max}$, $m_{{\\max}}={m_max}$   '
         f'({len(coeffs)} modes)\n'
         f'{fit_path}\n'
         r'Bubble $\propto \log_{10}|c|$,  colour = signed value  (symlog)',
-        fontsize=10)
+        fontsize=13)
 
     for xv in [-0.5, 0.5]:
         ax.axvline(xv, color='grey', lw=0.6, ls='--', alpha=0.6)
     for yv in [-0.5, 0.5]:
         ax.axhline(yv, color='grey', lw=0.6, ls='--', alpha=0.6)
     ax.text(-n_max * 0.5, -0.04, r'anti ($z$-odd)',
-            transform=ax.get_xaxis_transform(), ha='center', fontsize=10, color='grey')
+            transform=ax.get_xaxis_transform(), ha='center', fontsize=14, color='grey')
     ax.text( n_max * 0.5, -0.04, r'sym ($z$-even)',
-            transform=ax.get_xaxis_transform(), ha='center', fontsize=10, color='grey')
+            transform=ax.get_xaxis_transform(), ha='center', fontsize=14, color='grey')
 
     ax.set_axisbelow(True)
     ax.grid(True, which='both', lw=0.3, alpha=0.4)
-    cbar = fig.colorbar(sc, ax=ax, pad=0.01, shrink=0.8)
-    cbar.set_label('coefficient value', fontsize=11)
-    cbar.ax.tick_params(labelsize=10)
+    _inset_colorbar(fig, ax, sc, 'coefficient value')
     fig.tight_layout()
     return fig
 
@@ -227,9 +233,7 @@ def plot_harmonic(coeffs, params, l_max, fit_path, text_thresh):
     m_max = max(m for (l, m, cs) in params) if params else l_max
     x_range = m_max  # x-axis spans only the m values actually present
 
-    fig_w = max(8, x_range * 1.5 + 2)
-    fig_h = max(8, l_max * 0.6)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig, ax = plt.subplots(figsize=(16, 9))
 
     sc = _scatter_and_annotate(ax, xs, ys, vals, norm, cmap, text_thresh)
 
@@ -238,26 +242,24 @@ def plot_harmonic(coeffs, params, l_max, fit_path, text_thresh):
     ax.invert_yaxis()
     xticks = list(range(-x_range, x_range + 1))
     ax.set_xticks(xticks)
-    ax.set_xticklabels([str(x) if abs(x) % 2 == 0 else '' for x in xticks], fontsize=11)
+    ax.set_xticklabels([str(x) if abs(x) % 2 == 0 else '' for x in xticks], fontsize=15)
     ax.set_yticks(range(1, l_max + 1))
-    ax.set_yticklabels([str(l) for l in range(1, l_max + 1)], fontsize=11)
+    ax.set_yticklabels([str(l) for l in range(1, l_max + 1)], fontsize=15)
     ax.set_xlabel(r'$m$  (negative = sine / $B_{l,m}$,  positive = cosine / $A_{l,m}$)',
-                  fontsize=13)
-    ax.set_ylabel(r'$\ell$', fontsize=14)
+                  fontsize=17)
+    ax.set_ylabel(r'$\ell$', fontsize=18)
     ax.set_title(f'Spherical-harmonic coefficients   (file: {fit_path})\n'
                  r'Bubble size $\propto \log_{10}|c|$,  colour = signed value  (symlog scale)',
-                 fontsize=12)
+                 fontsize=14)
     for xv in [-0.5, 0.5]:
         ax.axvline(xv, color='grey', lw=0.6, ls='--', alpha=0.6)
     ax.text(-x_range * 0.5, 0.15, r'sine ($B_{l,m}$)',
-            transform=ax.get_xaxis_transform(), ha='center', fontsize=11, color='grey')
+            transform=ax.get_xaxis_transform(), ha='center', fontsize=15, color='grey')
     ax.text( x_range * 0.5, 0.15, r'cosine ($A_{l,m}$)',
-            transform=ax.get_xaxis_transform(), ha='center', fontsize=11, color='grey')
+            transform=ax.get_xaxis_transform(), ha='center', fontsize=15, color='grey')
     ax.set_axisbelow(True)
     ax.grid(True, which='both', lw=0.3, alpha=0.4)
-    cbar = fig.colorbar(sc, ax=ax, pad=0.01, shrink=0.8)
-    cbar.set_label('coefficient value', fontsize=11)
-    cbar.ax.tick_params(labelsize=10)
+    _inset_colorbar(fig, ax, sc, 'coefficient value')
     fig.tight_layout()
     return fig
 
@@ -301,9 +303,7 @@ def plot_zernike(coeffs, params, n_max, l_max, fit_path, text_thresh):
     norm = mcolors.SymLogNorm(linthresh=linthresh, vmin=-vmax, vmax=vmax, base=10)
     cmap = plt.get_cmap('RdBu_r')
 
-    fig_w = max(10, (2 * l_max + 3) * 0.55)
-    fig_h = max(8,  n_rows * 0.35 + 2)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig, ax = plt.subplots(figsize=(16, 9))
 
     # ── highlight n=l rows (standard harmonic modes) ─────────────────────────
     for i, (n, l) in enumerate(nl_pairs):
@@ -327,23 +327,23 @@ def plot_zernike(coeffs, params, n_max, l_max, fit_path, text_thresh):
         if n == l:
             label += ' *'   # mark harmonic modes
         ylabels.append(label)
-    ax.set_yticklabels(ylabels, fontsize=8)
+    ax.set_yticklabels(ylabels, fontsize=12)
     ax.set_ylim(-0.5, n_rows - 0.5)
     ax.invert_yaxis()
 
     # ── x-axis ────────────────────────────────────────────────────────────────
     xticks = list(range(-l_max, l_max + 1))
     ax.set_xticks(xticks)
-    ax.set_xticklabels([str(x) if abs(x) % 2 == 0 else '' for x in xticks], fontsize=10)
+    ax.set_xticklabels([str(x) if abs(x) % 2 == 0 else '' for x in xticks], fontsize=14)
     ax.set_xlim(-l_max - 0.7, l_max + 0.7)
-    ax.set_xlabel(r'$m$  (negative = sine,  positive = cosine)', fontsize=12)
+    ax.set_xlabel(r'$m$  (negative = sine,  positive = cosine)', fontsize=16)
 
     for xv in [-0.5, 0.5]:
         ax.axvline(xv, color='grey', lw=0.6, ls='--', alpha=0.6)
     ax.text(-l_max * 0.5, -0.04,  r'sine',
-            transform=ax.get_xaxis_transform(), ha='center', fontsize=10, color='grey')
+            transform=ax.get_xaxis_transform(), ha='center', fontsize=14, color='grey')
     ax.text( l_max * 0.5, -0.04, r'cosine',
-            transform=ax.get_xaxis_transform(), ha='center', fontsize=10, color='grey')
+            transform=ax.get_xaxis_transform(), ha='center', fontsize=14, color='grey')
 
     ax.set_title(
         f'Zernike coefficients   $n_{{\\max}}={n_max}$, $\\ell_{{\\max}}={l_max}$   '
@@ -351,13 +351,11 @@ def plot_zernike(coeffs, params, n_max, l_max, fit_path, text_thresh):
         f'{fit_path}\n'
         r'Bubble $\propto \log_{10}|c|$,  colour = signed value  (symlog)'
         r'  * = standard harmonic mode ($n=\ell$)',
-        fontsize=10)
+        fontsize=13)
     ax.set_axisbelow(True)
     ax.grid(True, which='both', lw=0.3, alpha=0.4)
 
-    cbar = fig.colorbar(sc, ax=ax, pad=0.01, shrink=0.8)
-    cbar.set_label('coefficient value', fontsize=11)
-    cbar.ax.tick_params(labelsize=10)
+    _inset_colorbar(fig, ax, sc, 'coefficient value')
     fig.tight_layout()
     return fig
 
@@ -374,7 +372,7 @@ def main():
     coeffs     = data['coeffs']
     basis_type = str(data.get('basis_type', 'harmonic'))
 
-    if basis_type == 'cylindrical':
+    if basis_type in ('cylindrical', 'bessel'):
         n_max  = int(data['n_max'])
         m_max  = int(data['m_max'])
         modes  = parse_params_cyl(data['params'])
@@ -391,6 +389,9 @@ def main():
 
     fig.savefig(args.out, dpi=150, bbox_inches='tight')
     print(f'Written → {args.out}')
+    png_path = os.path.splitext(args.out)[0] + '.png'
+    fig.savefig(png_path, dpi=150, bbox_inches='tight')
+    print(f'Written → {png_path}')
 
 
 if __name__ == '__main__':
