@@ -29,18 +29,64 @@ import numpy as np
 from scipy.special import lpmv
 
 
-def param_list(l_max):
-    """Return list of (l, m, cs) tuples for all basis modes up to l_max.
+def param_list(l_max, l_max_phi=None, n_max_sum=None, m_max_per_l=None):
+    """Return list of (l, m, cs) tuples for all basis modes.
 
     cs = 'c' for cosine (A coefficient), 's' for sine (B coefficient, m>0 only).
     l=0 (Phi = constant) is omitted: it contributes zero to all field components
     (Bz = Br = Bphi = 0) and is a pure gauge degree of freedom that makes the
     design matrix rank-deficient.
-    Total parameters: (l_max+1)^2 - 1.
+
+    Four truncation schemes (checked in order; earlier ones take priority):
+    ───────────────────────────────────────────────────────────────────────
+    Custom per-l envelope  (m_max_per_l dict set)
+        m_max_per_l maps l → max_m for that l; l absent from the dict uses
+        the default max_m = min(l, l_max_phi if l_max_phi else l_max).
+        Set m_max_per_l[l] = -1 to skip that l entirely.
+        Example: {17: -1, 16: 0, 18: 0, 6: 2, ..., 15: 1}
+
+    Diamond  (n_max_sum set, l_max_phi ignored)
+        Include (l, m) if l + m ≤ n_max_sum (and m ≤ l, l ≥ 1).
+        l_max is automatically set to n_max_sum.
+
+    Asymmetric  (l_max_phi set, n_max_sum=None)
+        m=0 modes up to l=l_max; m>0 modes up to l=l_max_phi.
+        Total: l_max + l_max_phi*(l_max_phi+1) parameters.
+
+    Standard triangular  (all None)
+        Include (l, m) for l=1..l_max, m=0..l.
+        Total: (l_max+1)^2 − 1 parameters.
     """
+    if m_max_per_l is not None:
+        default_mmax = l_max_phi if l_max_phi is not None else l_max
+        params = []
+        for l in range(1, l_max + 1):
+            mmax = m_max_per_l.get(l, min(l, default_mmax))
+            if mmax < 0:
+                continue   # skip this l entirely
+            mmax = min(mmax, l)
+            params.append((l, 0, 'c'))
+            for m in range(1, mmax + 1):
+                params.append((l, m, 'c'))
+                params.append((l, m, 's'))
+        return params
+
+    if n_max_sum is not None:
+        params = []
+        for l in range(1, n_max_sum + 1):
+            for m in range(0, l + 1):
+                if l + m <= n_max_sum:
+                    params.append((l, m, 'c'))
+                    if m > 0:
+                        params.append((l, m, 's'))
+        return params
+
+    if l_max_phi is None:
+        l_max_phi = l_max
     params = []
     for l in range(1, l_max + 1):
         params.append((l, 0, 'c'))
+    for l in range(1, l_max_phi + 1):
         for m in range(1, l + 1):
             params.append((l, m, 'c'))
             params.append((l, m, 's'))
@@ -186,7 +232,8 @@ def bphi_basis(l, m, cs, r, phi, z, r_scale=1.0, z0=0.0):
     return m * inv_r * R_l * plm_val * phi_factor
 
 
-def build_design_matrix(r, phi, z, l_max, components=('Bz',), r_scale=None, z0=0.0):
+def build_design_matrix(r, phi, z, l_max, components=('Bz',), r_scale=None, z0=0.0,
+                        l_max_phi=None, n_max_sum=None, m_max_per_l=None):
     """Build the design matrix for the harmonic basis fit.
 
     Each row corresponds to one data point (one field component at one location).
@@ -218,7 +265,8 @@ def build_design_matrix(r, phi, z, l_max, components=('Bz',), r_scale=None, z0=0
         if r_scale == 0:
             r_scale = 1.0
 
-    params = param_list(l_max)
+    params = param_list(l_max, l_max_phi=l_max_phi, n_max_sum=n_max_sum,
+                        m_max_per_l=m_max_per_l)
     n_pts = len(r)
     n_comp = len(components)
     n_params = len(params)

@@ -27,6 +27,29 @@ TRACKER_OAE_ZMAX  = 280.0   # cm
 TRACKER_P3D_RMAX  = 190.0   # cm
 TRACKER_P3D_ZMAX  = 350.0   # cm  (also corner cut |z|+2.5r < 670 cm)
 
+# CMSSW field map volume z-boundaries inside the tracker region.
+# Extracted from MagneticField/Interpolation/data/grid_170812_3_8t/log_convert.txt
+# (X3 / X3+(N3-1)*A3 values of rφz-volumes that begin or end within |z| < 300 cm).
+# z ≈ ±126.8 cm : coil central-module boundary (module half-length 125.6 cm)
+# z ≈ ±142.3 cm : vacuum vessel / thermal shield layer boundary
+# z ≈ ±181.3 cm : cryogenic chimney volume boundary (added map version 1103_071212)
+CMSSW_VOL_Z = [126.8, 142.3, 181.3]   # cm, positive side; mirrored to ±
+
+
+def add_volume_boundaries(ax, orientation='z-axis'):
+    """Draw black dashed lines at CMSSW field-map volume z-boundaries.
+
+    orientation : 'z-axis'  — ax.axvline (z is the x-axis, as in r-z maps)
+                  'z-yaxis' — ax.axhline (z is the y-axis, as in phi-z maps)
+    """
+    kw = dict(color='black', lw=0.8, ls='--', alpha=0.7)
+    for z0 in CMSSW_VOL_Z:
+        for z in [+z0, -z0]:
+            if orientation == 'z-axis':
+                ax.axvline(z, **kw)
+            else:
+                ax.axhline(z, **kw)
+
 
 def add_tracker_boundaries(ax):
     """Overlay tracker boundary rectangles on an r-z axes.
@@ -58,7 +81,8 @@ def add_tracker_boundaries(ax):
 
 from harmonic_basis import eval_field
 from cylindrical_basis import eval_field_cyl, parse_mode_label
-from fit_field import load_grid
+from fit_field import load_grid, vol_boundary_mask, CMSSW_VOL_BOUNDARIES_CM, parse_m_max_per_l
+import zernike_basis
 
 
 # ---------------------------------------------------------------------------
@@ -76,35 +100,71 @@ def load_fit(npz_path):
     d = np.load(npz_path, allow_pickle=True)
     coeffs = d['coeffs']
     param_strs = list(d['params'])
-    basis = str(d['basis']) if 'basis' in d else 'spherical'
+    basis_type = str(d.get('basis_type', d.get('basis', 'spherical')))
 
-    if basis == 'cylindrical':
+    def _scalar(key, default=np.nan):
+        return float(d[key]) if key in d else default
+
+    if basis_type == 'cylindrical':
         modes = [parse_mode_label(s) for s in param_strs]
         meta = {
             'basis': 'cylindrical',
             'L':     float(d['L']),
             'n_max': int(d['n_max']),
             'm_max': int(d['m_max']),
-            'components': list(d.get('components', ['Bz', 'Br', 'Bphi'])),
+            'components':             list(d.get('components', ['Bz', 'Br', 'Bphi'])),
+            'rmax_cm':                _scalar('rmax_cm'),
+            'zmax_cm':                _scalar('zmax_cm'),
+            'rmax_sphere_cm':         _scalar('rmax_sphere_cm'),
+            'rmin_sphere_cm':         _scalar('rmin_sphere_cm'),
+            'exclude_vol_boundaries': bool(d['exclude_vol_boundaries']) if 'exclude_vol_boundaries' in d else False,
         }
         return coeffs, modes, meta
-    else:
+
+    elif basis_type == 'zernike':
+        params = []
+        for s in param_strs:
+            parts = s.split('_')
+            params.append((int(parts[0][1:]), int(parts[1][1:]), int(parts[2][1:]), parts[3]))
+        meta = {
+            'basis':                  'zernike',
+            'r_scale':                float(d['r_scale']),
+            'z0':                     float(d['z0']) if 'z0' in d else 0.0,
+            'n_max':                  int(d['n_max']) if 'n_max' in d else -1,
+            'l_max':                  int(d['l_max']) if 'l_max' in d else -1,
+            'components':             list(d.get('components', ['Bz', 'Br', 'Bphi'])),
+            'rmax_cm':                _scalar('rmax_cm'),
+            'zmax_cm':                _scalar('zmax_cm'),
+            'rmax_sphere_cm':         _scalar('rmax_sphere_cm'),
+            'rmin_sphere_cm':         _scalar('rmin_sphere_cm'),
+            'exclude_vol_boundaries': bool(d['exclude_vol_boundaries']) if 'exclude_vol_boundaries' in d else False,
+        }
+        return coeffs, params, meta
+
+    else:  # harmonic / spherical
         params = []
         for s in param_strs:
             parts = s.split('_')
             params.append((int(parts[0][1:]), int(parts[1][1:]), parts[2]))
-        def _scalar(key, default=np.nan):
-            return float(d[key]) if key in d else default
-
+        l_max_phi = int(d['l_max_phi']) if 'l_max_phi' in d else None
+        n_max_sum = int(d['n_max_sum']) if 'n_max_sum' in d else None
+        mmpl_str  = str(d['m_max_per_l_str']) if 'm_max_per_l_str' in d else None
+        m_max_per_l = (parse_m_max_per_l(mmpl_str) if mmpl_str is not None else None)
         meta = {
-            'basis':          'spherical',
-            'r_scale':        float(d['r_scale']),
-            'z0':             float(d['z0']) if 'z0' in d else 0.0,
-            'l_max':          int(d['l_max']) if 'l_max' in d else -1,
-            'components':     list(d.get('components', ['Bz', 'Br', 'Bphi'])),
-            'rmax_cm':        _scalar('rmax_cm'),
-            'zmax_cm':        _scalar('zmax_cm'),
-            'rmax_sphere_cm': _scalar('rmax_sphere_cm'),
+            'basis':                  'harmonic',
+            'r_scale':                float(d['r_scale']),
+            'z0':                     float(d['z0']) if 'z0' in d else 0.0,
+            'l_max':                  int(d['l_max']) if 'l_max' in d else -1,
+            'l_max_phi':              l_max_phi,
+            'n_max_sum':              n_max_sum,
+            'm_max_per_l':            m_max_per_l,
+            'm_max_per_l_str':        mmpl_str,
+            'components':             list(d.get('components', ['Bz', 'Br', 'Bphi'])),
+            'rmax_cm':                _scalar('rmax_cm'),
+            'zmax_cm':                _scalar('zmax_cm'),
+            'rmax_sphere_cm':         _scalar('rmax_sphere_cm'),
+            'rmin_sphere_cm':         _scalar('rmin_sphere_cm'),
+            'exclude_vol_boundaries': bool(d['exclude_vol_boundaries']) if 'exclude_vol_boundaries' in d else False,
         }
         return coeffs, params, meta
 
@@ -116,6 +176,11 @@ def compute_residuals(grid, coeffs, params_or_modes, meta,
         pred = eval_field_cyl(coeffs, params_or_modes,
                               grid['r_cm'], grid['phi'], grid['z_cm'],
                               L=meta['L'], components=components)
+    elif meta['basis'] == 'zernike':
+        pred = zernike_basis.eval_field(coeffs, params_or_modes,
+                                        grid['r_cm'], grid['phi'], grid['z_cm'],
+                                        components=components,
+                                        r_scale=meta['r_scale'], z0=meta['z0'])
     else:
         pred = eval_field(coeffs, params_or_modes,
                           grid['r_cm'], grid['phi'], grid['z_cm'],
@@ -227,7 +292,7 @@ def make_2d_map(ax, x, y, residuals, comp, xlabel, ylabel,
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--fit', default='tosca170812_extended_coeffs_lmax18_all3_rmax290.npz',
+    parser.add_argument('--fit', default='data/fitresults/tosca170812_extended_coeffs_lmax18_all3_rmax290.npz',
                         help='NPZ file with fit coefficients')
     parser.add_argument('--grid', default='../MagneticField/Engine/test/field_tosca170812_extended.txt',
                         help='Field grid file to evaluate residuals on')
@@ -252,8 +317,20 @@ def main():
     basis = meta['basis']
     if basis == 'cylindrical':
         lmax = f"cyl n_max={meta['n_max']} m_max={meta['m_max']}"
+    elif basis == 'zernike':
+        lmax = f"n_max={meta.get('n_max','?')} l_max={meta.get('l_max','?')}"
     else:
-        lmax = meta.get('l_max', '?')
+        nms  = meta.get('n_max_sum')
+        lp   = meta.get('l_max_phi')
+        mmpl = meta.get('m_max_per_l_str')
+        if mmpl is not None:
+            lmax = f"custom ({len(meta.get('m_max_per_l') or {})} overrides)"
+        elif nms is not None:
+            lmax = f"diamond n_max_sum={nms}"
+        elif lp is not None and lp != meta.get('l_max'):
+            lmax = f"l_max={meta.get('l_max','?')} l_max_phi={lp}"
+        else:
+            lmax = meta.get('l_max', '?')
 
     # Use cuts from the npz if available; command-line --rmax-sphere overrides rmax_sphere only
     rmax_sphere = args.rmax_sphere
@@ -261,11 +338,16 @@ def main():
         rmax_sphere = meta['rmax_sphere_cm']
     rmax_cm = None if np.isnan(meta.get('rmax_cm', np.nan)) else meta['rmax_cm']
     zmax_cm = None if np.isnan(meta.get('zmax_cm', np.nan)) else meta['zmax_cm']
+    rmin_sphere = None if np.isnan(meta.get('rmin_sphere_cm', np.nan)) else meta['rmin_sphere_cm']
 
+    excl = meta.get('exclude_vol_boundaries', False)
     print(f"Loading grid: {args.grid}  "
-          f"(rmax={rmax_cm}, zmax={zmax_cm}, rmax_sphere={rmax_sphere} cm)")
+          f"(rmax={rmax_cm}, zmax={zmax_cm}, rmax_sphere={rmax_sphere}"
+          f"{f', rmin_sphere={rmin_sphere}' if rmin_sphere is not None else ''} cm"
+          f"{', excl vol boundaries' if excl else ''})")
     grid = load_grid(args.grid, rmax_cm=rmax_cm, zmax_cm=zmax_cm,
-                     rmax_sphere_cm=rmax_sphere)
+                     rmax_sphere_cm=rmax_sphere, rmin_sphere_cm=rmin_sphere,
+                     exclude_vol_boundaries=excl)
     print(f"  {len(grid['r_cm']):,} points after cut")
 
     # ---- evaluate ----
@@ -350,6 +432,7 @@ def main():
             make_2d_map(ax, z, r, residuals[comp], comp, r'$z$ [cm]', r'$r$ [cm]')
             ax.set_title(COMP_LABELS[comp])
             add_tracker_boundaries(ax)
+            add_volume_boundaries(ax, orientation='z-axis')
         plt.tight_layout(rect=[0, 0, 1, 0.93])
         pdf.savefig(fig); plt.close(fig)
 
@@ -364,8 +447,57 @@ def main():
             make_2d_map(ax, phi, z, residuals[comp], comp,
                         r'$\phi$ [rad]', r'$z$ [cm]')
             ax.set_title(COMP_LABELS[comp])
+            add_volume_boundaries(ax, orientation='z-yaxis')
         plt.tight_layout(rect=[0, 0, 1, 0.93])
         pdf.savefig(fig); plt.close(fig)
+
+        # ------------------------------------------------------------------
+        # Page 7b: 2D maps in (r, z) — tracker region only
+        # ------------------------------------------------------------------
+        tk = (r < TRACKER_OAE_RMAX) & (np.abs(z) < TRACKER_OAE_ZMAX)
+        if tk.sum() > 20:
+            fig, axes = plt.subplots(1, len(components), figsize=(6*len(components), 5))
+            if len(components) == 1:
+                axes = [axes]
+            fig.suptitle(
+                f'Mean residual map in $(r, z)$ — tracker region only '
+                f'(r<{TRACKER_OAE_RMAX:.0f} cm, |z|<{TRACKER_OAE_ZMAX:.0f} cm)  '
+                f'(l_max={lmax})', fontsize=10)
+            for ax, comp in zip(axes, components):
+                make_2d_map(ax, z[tk], r[tk], residuals[comp][tk], comp,
+                            r'$z$ [cm]', r'$r$ [cm]', nx=56, ny=23)
+                ax.set_xlim(-TRACKER_OAE_ZMAX, TRACKER_OAE_ZMAX)
+                ax.set_ylim(0, TRACKER_OAE_RMAX)
+                ax.set_title(COMP_LABELS[comp])
+                rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
+                ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
+                        transform=ax.transAxes, fontsize=8, va='top')
+                add_volume_boundaries(ax, orientation='z-axis')
+            plt.tight_layout(rect=[0, 0, 1, 0.90])
+            pdf.savefig(fig); plt.close(fig)
+
+        # ------------------------------------------------------------------
+        # Page 7c: 2D maps in (phi, z) — tracker region only
+        # ------------------------------------------------------------------
+        if tk.sum() > 20:
+            fig, axes = plt.subplots(1, len(components), figsize=(6*len(components), 5))
+            if len(components) == 1:
+                axes = [axes]
+            fig.suptitle(
+                f'Mean residual map in $(\phi, z)$ — tracker region only '
+                f'(r<{TRACKER_OAE_RMAX:.0f} cm, |z|<{TRACKER_OAE_ZMAX:.0f} cm)  '
+                f'(l_max={lmax})', fontsize=10)
+            for ax, comp in zip(axes, components):
+                make_2d_map(ax, phi[tk], z[tk], residuals[comp][tk], comp,
+                            r'$\phi$ [rad]', r'$z$ [cm]', nx=36, ny=56)
+                ax.set_ylim(-TRACKER_OAE_ZMAX, TRACKER_OAE_ZMAX)
+                ax.set_title(COMP_LABELS[comp])
+                rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
+                ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
+                        transform=ax.transAxes, fontsize=8, va='top')
+                add_volume_boundaries(ax, orientation='z-yaxis')
+            plt.tight_layout(rect=[0, 0, 1, 0.90])
+            pdf.savefig(fig); plt.close(fig)
 
         # ------------------------------------------------------------------
         # Page 8: 2D maps in (r, phi) — midplane only (|z| < 20 cm)

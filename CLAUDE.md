@@ -161,6 +161,20 @@ These cuts are stored in the output `.npz` files and read back automatically by 
 - Tracker accuracy is 10× better than global average.
 - Boundary residuals (~1.82 mT) are **irreducible TOSCA artifacts** — they do not decrease with stronger regularization. They reflect the volume-decomposed interpolation structure of the TOSCA model at primitive volume boundaries, not harmonic overfitting.
 
+### CMSSW Primitive Volume Boundaries (z-kinks)
+
+The CMSSW field model decomposes the solenoid bore into 11,136 primitive volumes with piecewise bilinear interpolation. This introduces gradient discontinuities (kinks) at volume z-boundaries that are visible in tracker residual maps:
+
+| z boundary (cm) | Amplitude (Bz) | Physical origin |
+|---|---|---|
+| ±126.8 cm | ~0.07–0.10 mT | Coil module boundary |
+| ±142.3 cm | ~0.07–0.10 mT | Thermal shield/vacuum vessel |
+| ±181.3 cm | ~0.07–0.10 mT | Cryogenic chimney (added in v1103_071212) |
+
+These kinks span **all r and all phi** because the z-layer boundaries are global across all 12 azimuthal sectors. They are visible as horizontal bands in (r, z) and (phi, z) tracker residual maps.
+
+**Effect on tracker RMS**: With r<115, |z|<280 the kink-affected rows dominate and push tracker RMS to ~0.092–0.095 mT. Excluding points within ±12 cm of these boundaries (`--exclude-vol-boundaries`) reduces tracker RMS to ~0.073 mT (-20%).
+
 ### Effect of Spectral Tikhonov Regularization
 
 Penalty for mode (l,m) scales as [l(l+1)]^s. Best result: λ=1e-3, s=3 → tracker RMS 0.067 mT (small improvement). Boundary residuals unchanged at ~1.82 mT regardless of λ or s — confirmed irreducible.
@@ -172,6 +186,23 @@ python fit_field.py -i ../MagneticField/Engine/test/field_tosca170812_sphere320.
   --tikhonov 1e-3 --tikhonov-power 3 \
   --output tosca170812_sphere320_coeffs_lmax18_s3
 ```
+
+### Effect of Volume Boundary Exclusion (`--exclude-vol-boundaries`)
+
+Excludes points within ±12 cm of z = ±126.8, ±142.3, ±181.3 cm from the fit. Tracker clean-region RMS improves ~20%:
+
+| Fit | Tracker Bz RMS | Boundary Bz RMS |
+|---|---|---|
+| baseline (lmax=18, noreg) | 0.092 mT | 1.82 mT |
+| + exclude-vol-boundaries | **0.073 mT** | ~1.85 mT |
+
+Near-boundary RMS slightly worsens (+5%) — the polynomial now bridges the gap rather than fitting the kink. Use `_excl` tag in output filename.
+
+### Effect of Gauss-Legendre Sampling Weights (`--gl-weights`)
+
+Upweights polar (|cosθ|→1) points by GL quadrature weights to correct for the uniform-z oversampling of the equatorial region. **Result: this does not help.** Tracker RMS worsens 0.096→0.145 mT; boundary RMS worsens 1.82→1.99 mT. Condition number improves (7.5→2.8) but physical fit quality degrades.
+
+**Conclusion**: The boundary oscillations are intrinsic to polynomial basis truncation at l_max (Runge phenomenon), not a sampling artifact. Legendre P_l_max has l_max zeros → l_max/2 oscillations per half-plane at the sphere boundary. GL weighting forces the fit to match noisy boundary values at the expense of the clean tracker region. NMR constraints are the correct mechanism to anchor the boundary modes.
 
 ### Residual Plots
 
@@ -230,11 +261,17 @@ Note: C/D NMR readings are only available for 2017 within Run 2. A/E data covers
 
 ---
 
-## Planned Next Step: NMR Constraints in the Fit
+## Next Step: NMR Constraints in the Fit
 
 The ~1.82 mT boundary residuals occur near the coil (r~290 cm), exactly where the NMR probes A/E are located. NMR measurements with 0.05 mT precision can anchor the fit solution in this region.
 
-**Implementation plan** (not yet done):
+**Why non-NMR approaches don't solve this:**
+- Tikhonov regularization (all variants): boundary residuals unchanged at ~1.82 mT
+- Volume boundary exclusion: improves clean-tracker RMS but boundary region residuals remain
+- GL-weighted sampling: definitively tested and fails — worsens tracker RMS 0.096→0.145 mT
+- The oscillations are Runge phenomenon at the l_max sphere boundary, intrinsic to basis truncation, not curable by resampling
+
+**NMR constraint implementation plan** (not yet done):
 1. Load measured field values from `NMR_tabulated.csv` (2017 run, 18164 A)
 2. Evaluate TOSCA prediction at each probe (from `field_results_170812_run2.txt`) — difference is the NMR residual
 3. Append 4 NMR constraint rows to the design matrix, weighted by σ_TOSCA/σ_NMR ~ 1.82 mT / 0.05 mT ~ 36
@@ -294,5 +331,7 @@ Pattern: `{grid_stem}_coeffs_lmax{N}[_{tag}].npz`
 - `_rmax{R}`: non-default r cut (e.g. `_rmax308` tested going into the coil conductor)
 - `_z0_{d}mm`: non-zero axial origin offset
 - `_cyl{R}`: cylindrical (Fourier-Bessel) basis fit
+- `_excl`: points within ±12 cm of CMSSW volume z-boundaries excluded from fit
+- `_gl`: Gauss-Legendre quadrature weights applied (tested, worsens results — avoid)
 
-Current best: `tosca170812_sphere320_coeffs_lmax18_noreg.npz` (lmax=18, no reg, tracker RMS 0.095 mT) or `tosca170812_sphere320_coeffs_lmax18_s3.npz` (lmax=18, λ=1e-3, s=3, tracker RMS 0.067 mT).
+Current best: `tosca170812_sphere320_coeffs_lmax18_noreg.npz` (lmax=18, no reg, tracker RMS 0.095 mT) or `tosca170812_sphere320_coeffs_lmax18_s3.npz` (lmax=18, λ=1e-3, s=3, tracker RMS 0.067 mT). With exclusion: `..._excl.npz` gives tracker RMS 0.073 mT.
