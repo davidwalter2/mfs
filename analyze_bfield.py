@@ -34,7 +34,7 @@ def parseArgs():
         "--input",
         type=str,
         required=True,
-        help="Path to folder with grid files for input",
+        help="Path to field grid file produced by dumpField_cfg.py (format: r[cm] phi[rad] z[cm] x y Bx By Bz)",
     )
     parser.add_argument(
         "-o",
@@ -66,9 +66,9 @@ def parseArgs():
         "--fieldComponents",
         type=str,
         nargs="*",
-        default=["Bz", "Br", "Bphi", "Phi"],
-        choices=["Bx", "By", "Bz", "Br", "Bphi", "Phi"],
-        help="B field vector components or scalar field to be plotted",
+        default=["Bz", "Br", "Bphi"],
+        choices=["Bx", "By", "Bz", "Br", "Bphi"],
+        help="B field vector components to be plotted",
     )
     parser.add_argument(
         "--makeGIFs", action="store_true", help="Make GIF plot instead of slices"
@@ -78,48 +78,43 @@ def parseArgs():
     return args
 
 def load_grid(input):
+    """Load a field grid from a dumpField_cfg.py output file.
+
+    Expected format (columns): r[cm]  phi[rad]  z[cm]  x[cm]  y[cm]  Bx[T]  By[T]  Bz[T]
+    """
     print("load grid")
 
-    files = glob.glob(f"{input}/s??_?/v-rpz-[12]00[0-5].table")
+    df = pd.read_csv(
+        input,
+        sep=r'\s+',
+        comment='#',
+        header=None,
+        usecols=[0, 1, 2, 5, 6, 7],  # r, phi, z, Bx, By, Bz
+        names=["r", "phi", "z", "Bx", "By", "Bz"],
+    )
 
-    # TODO: extend to larger radii (table 8) but has different binning
-    # files.extend(glob.glob(f"{input}/s??_?/v-rpz-[12]0-8.table"))
+    # Convert r, z from cm to m
+    df["r"] = df["r"] / 100.0
+    df["z"] = df["z"] / 100.0
 
-    dataframes = []
-    for f in sorted(files):
-        df = pd.read_csv(
-            f,
-            sep='\s+',
-            header=None,
-            usecols=[0, 1, 2, 3, 4, 5, 7], # r, phi, z, Bx, By, Bz, Phi
-            names=["r", "phi", "z", "Bx", "By", "Bz", "Phi"] #, "A", "B"]
-        )
-        dataframes.append(df)
-
-    df = pd.concat(dataframes, ignore_index=True)
-    df = df.sort_values(by=["r", "phi", "z"], ascending=[True, True, True])
-
-    # add the earth magnetic field of strength |B| = 47.842 µT
-    #   It goes from south to north and downwards on the northern hemisphere,
-    #   In CMS coordinates this is in -x direction and in the -y direction
-    df["Bx"] = df["Bx"] - 0.000015
-    df["By"] = df["By"] - 0.000042
-    df["Bz"] = df["Bz"] + 0.000015
-
+    # Compute cylindrical components (phi still in radians here)
     df["Bphi"] = -df["Bx"] * np.sin(df["phi"]) + df["By"] * np.cos(df["phi"])
-    df["Br"] =  df["Bx"] * np.cos(df["phi"]) + df["By"] * np.sin(df["phi"])
+    df["Br"]   =  df["Bx"] * np.cos(df["phi"]) + df["By"] * np.sin(df["phi"])
 
-    # convert to degree
-    df["phi"] = df["phi"]/(2*np.pi)*360
+    # Convert phi to degrees
+    df["phi"] = np.degrees(df["phi"])
 
+    # The dump files include a few spurious boundary points at non-standard phi
+    # values (sector edges, e.g. ±135.07°, 9.30°).  These appear as isolated
+    # 1–2 point groups.  Drop them by keeping only phi values with at least 10%
+    # of the typical slice size; duplicates within kept slices are removed below.
+    phi_counts = df.groupby("phi").size()
+    threshold = phi_counts.max() * 0.1
+    good_phi = phi_counts[phi_counts >= threshold].index
+    df = df[df["phi"].isin(good_phi)].copy()
 
-    # the values at -15 and 345 degree are the same, remove one of them
-    df = df[~(abs(df["phi"] + np.deg2rad(15.0)) < 0.0001)].copy()
-
-    # duplicates = df[df.duplicated(subset=["r", "phi", "z"], keep=False)]
-
-    # there are more duplicates from the s1 and s2 (related to same boundaries?)
     df = df.drop_duplicates(subset=["r", "phi", "z"], keep="first")
+    df = df.sort_values(by=["r", "phi", "z"], ascending=[True, True, True])
 
     return df
 
@@ -404,14 +399,17 @@ def make_polar_plot(args, h, phi_grid, r_grid, key, zbin, z_centers, outdir, zli
     # ax.set_xlabel("r in m")
     # ax.set_ylabel("phi in rad")
 
-    ax.text(1.0, 1.0, f"z = {round(z_centers[zbin]*100)} cm", ha="right", va="bottom", transform=plt.gca().transAxes)
+    # Place z label in figure coordinates (top-right), outside the polar axes bbox
+    # where add_decor puts the CMS label (top-left of axes).
+    fig.text(0.88, 0.93, f"$z = {round(z_centers[zbin]*100)}$ cm",
+             ha="right", va="bottom", fontsize=14)
 
     plot_tools.add_decor(
         ax,
         args.title,
         args.subtitle,
         data=True,
-        lumi=None,  # if args.dataName == "Data" and not args.noData else None,
+        lumi=None,
         loc=args.titlePos,
         text_size=args.legSize,
         no_energy=True
