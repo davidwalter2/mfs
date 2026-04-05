@@ -34,6 +34,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.cm as cm
+import mplhep as hep
+from wums import output_tools, plot_tools
+hep.style.use(hep.style.ROOT)
 
 # ── text threshold: only annotate cells whose |coeff| exceeds this ─────────
 DEFAULT_TEXT_THRESHOLD = 1e-4
@@ -363,9 +366,12 @@ def plot_zernike(coeffs, params, n_max, l_max, fit_path, text_thresh):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--fit', required=True, help='Input .npz file')
-    ap.add_argument('--out', default='coeffs.pdf', help='Output PDF/PNG')
     ap.add_argument('--text-threshold', type=float, default=DEFAULT_TEXT_THRESHOLD,
                     help='Show text for |coeff| > threshold (default %(default)s)')
+    ap.add_argument('--title', default='CMS', help='Experiment label (default: %(default)s)')
+    ap.add_argument('--subtitle', default='Simulation', help='Subtitle (default: %(default)s)')
+    ap.add_argument('--titlePos', type=int, default=0, help='Title position 0-4 (default: %(default)s)')
+    ap.add_argument('-o', '--outpath', default='.', help='Output directory')
     args = ap.parse_args()
 
     data       = np.load(args.fit, allow_pickle=True)
@@ -387,11 +393,13 @@ def main():
         params = parse_params_harmonic(data['params'])
         fig    = plot_harmonic(coeffs, params, l_max, args.fit, args.text_threshold)
 
-    fig.savefig(args.out, dpi=150, bbox_inches='tight')
-    print(f'Written → {args.out}')
-    png_path = os.path.splitext(args.out)[0] + '.png'
-    fig.savefig(png_path, dpi=150, bbox_inches='tight')
-    print(f'Written → {png_path}')
+    plot_tools.add_decor(fig.axes[0], args.title, args.subtitle, data=False, lumi=None, loc=args.titlePos, no_energy=True)
+    outdir = output_tools.make_plot_dir(args.outpath)
+    stem = os.path.splitext(os.path.basename(args.fit))[0]
+    outfile = f'coeffs_{stem}'
+    plot_tools.save_pdf_and_png(outdir, outfile)
+    output_tools.write_index_and_log(outdir, outfile, args=args)
+    plt.close(fig)
 
 
 if __name__ == '__main__':

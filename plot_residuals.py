@@ -18,6 +18,9 @@ from matplotlib.colors import Normalize
 import matplotlib.cm as cm
 import matplotlib.patches as mpatches
 import os
+import mplhep as hep
+from wums import output_tools, plot_tools
+hep.style.use(hep.style.ROOT)
 
 # Tracker volume boundaries (from CMSSW ParametrizedEngine isDefined())
 # OAE (default parametrization, standard tracking volume): r < 115 cm, |z| < 280 cm
@@ -64,7 +67,7 @@ def add_tracker_boundaries(ax):
         (-TRACKER_OAE_ZMAX, 0),
         2 * TRACKER_OAE_ZMAX, TRACKER_OAE_RMAX,
         linewidth=1.5, edgecolor='blue', facecolor='none',
-        linestyle='-', label=f'OAE tracker (r<{TRACKER_OAE_RMAX:.0f}, |z|<{TRACKER_OAE_ZMAX:.0f} cm)',
+        linestyle='-', label='OAE tracker',
         zorder=5,
     )
     # PolyFit3D / CVH validity rectangle
@@ -72,12 +75,21 @@ def add_tracker_boundaries(ax):
         (-TRACKER_P3D_ZMAX, 0),
         2 * TRACKER_P3D_ZMAX, TRACKER_P3D_RMAX,
         linewidth=1.5, edgecolor='green', facecolor='none',
-        linestyle='--', label=f'PolyFit3D (r<{TRACKER_P3D_RMAX:.0f}, |z|<{TRACKER_P3D_ZMAX:.0f} cm)',
+        linestyle='--', label='PolyFit3D',
         zorder=5,
     )
     ax.add_patch(rect_oae)
     ax.add_patch(rect_p3d)
-    ax.legend(fontsize=7, loc='upper right')
+    ax.legend(loc='upper right')
+
+
+def _add_cms_label(fig, args):
+    """Add CMS experiment label to the first axes of a figure."""
+    if fig.axes:
+        plot_tools.add_decor(
+            fig.axes[0], args.title, args.subtitle,
+            data=False, lumi=None, loc=args.titlePos, no_energy=True)
+
 
 from harmonic_basis import eval_field
 from cylindrical_basis import eval_field_cyl, parse_mode_label
@@ -221,7 +233,7 @@ COMP_LABELS = {'Bz': r'$B_z$', 'Br': r'$B_r$', 'Bphi': r'$B_\phi$'}
 COMP_COLORS = {'Bz': '#1f77b4', 'Br': '#ff7f0e', 'Bphi': '#2ca02c'}
 
 
-def make_histogram_page(residuals, components, title, ax_arr):
+def make_histogram_page(residuals, components, title, ax_arr, region_label=None):
     """Fill a row of histogram axes, one per component."""
     for ax, comp in zip(ax_arr, components):
         res = residuals[comp]
@@ -230,20 +242,32 @@ def make_histogram_page(residuals, components, title, ax_arr):
         bins = np.linspace(-3*rms, 3*rms, 80)
         ax.hist(res, bins=bins, color=COMP_COLORS[comp], alpha=0.75, density=True)
         ax.axvline(0, color='k', lw=0.8, ls='--')
-        ax.axvline(mu,  color='red',  lw=1.0, ls='-', label=f'mean={mu:+.3f} mT')
-        ax.set_xlabel(f'{COMP_LABELS[comp]} residual [mT]')
+        ax.axvline(mu, color='red', lw=1.0, ls='-')
+        ax.set_xlabel('residual [mT]')
         ax.set_ylabel('density')
-        ax.set_title(f'{COMP_LABELS[comp]}  RMS={rms:.4f} mT  N={len(res):,}')
-        ax.legend(fontsize=8)
+        # expand y-axis to give clear headroom above histogram for text
+        yhi = ax.get_ylim()[1]
+        ax.set_ylim(0, yhi * 1.5)
+        # stats block: upper left — RMS, mean, N
+        ax.text(0.02, 0.98,
+                f'RMS = {rms:.4f} mT\nmean = {mu:+.4f} mT\nN = {len(res):,}',
+                ha='left', va='top', transform=ax.transAxes,
+                fontsize='small', linespacing=1.4)
+        # component label: upper right
+        ax.text(0.98, 0.98, COMP_LABELS[comp],
+                ha='right', va='top', transform=ax.transAxes)
+        # region label: lower right (avoids crowding the top)
+        if region_label is not None:
+            ax.text(0.98, 0.02, region_label,
+                    ha='right', va='bottom', transform=ax.transAxes,
+                    fontsize='small')
 
 
-def slice_plot(fig, gs_row, x_vals, res_vals, xlabel, comp, nbins=30,
+def slice_plot(ax, x_vals, res_vals, xlabel, comp, nbins=30,
                profile_only=False):
     """
-    One column of a slice row: scatter (or profile mean ± RMS) vs x_vals.
-    gs_row: a 2-element GridSpec row [scatter_ax, profile_ax].
+    Profile mean ± RMS vs x_vals, drawn into an existing axes.
     """
-    ax = fig.add_subplot(gs_row)
     rms_global = np.sqrt(np.mean(res_vals**2))
 
     # bin centres and per-bin mean/rms
@@ -268,20 +292,19 @@ def slice_plot(fig, gs_row, x_vals, res_vals, xlabel, comp, nbins=30,
     ax.axhline(+rms_global, color='grey', lw=0.6, ls=':')
     ax.axhline(-rms_global, color='grey', lw=0.6, ls=':')
     ax.set_xlabel(xlabel)
-    ax.set_ylabel(f'{COMP_LABELS[comp]} residual [mT]')
-    ax.legend(fontsize=7)
+    ax.set_ylabel('residual [mT]')
+    ax.text(1.0, 1.0, COMP_LABELS[comp], ha='right', va='bottom', transform=ax.transAxes)
+    ax.legend()
     return ax
 
 
 def make_slice_page(fig, residuals, grid, components, var, xlabel, nbins=30):
-    """
-    One page of slice plots: rows=components, 1 profile plot per component.
-    Returns the axes list.
-    """
+    """Kept for back-compat; not used in main any more."""
     n = len(components)
     gs = gridspec.GridSpec(n, 1, figure=fig, hspace=0.45)
     for i, comp in enumerate(components):
-        slice_plot(fig, gs[i], var, residuals[comp], xlabel, comp, nbins=nbins)
+        ax = fig.add_subplot(gs[i])
+        slice_plot(ax, var, residuals[comp], xlabel, comp, nbins=nbins)
 
 
 def make_2d_map(ax, x, y, residuals, comp, xlabel, ylabel,
@@ -326,6 +349,9 @@ def main():
                         help='Number of bins for profile plots')
     parser.add_argument('--no-vol-boundaries', action='store_true',
                         help='Suppress CMSSW volume boundary lines (use for PolyFit3D/smooth models)')
+    parser.add_argument('--title', default='CMS', help='Experiment label (default: %(default)s)')
+    parser.add_argument('--subtitle', default='Work in progress', help='Subtitle (default: %(default)s)')
+    parser.add_argument('--titlePos', type=int, default=0, help='Title position 0-4 (default: %(default)s)')
     args = parser.parse_args()
 
     # output path
@@ -394,203 +420,179 @@ def main():
         print(f"{comp:<8}  {np.sqrt(np.mean(res**2)):10.4f}  {np.mean(res):10.4f}  "
               f"{np.max(np.abs(res)):12.4f}")
 
-    # ---- multi-page PDF ----
-    from matplotlib.backends.backend_pdf import PdfPages
-    print(f"\nWriting {args.out} ...")
-    with PdfPages(args.out) as pdf:
+    # ---- individual plots ----
+    outdir = output_tools.make_plot_dir(os.path.dirname(os.path.abspath(args.out)))
+    stem   = os.path.splitext(os.path.basename(args.out))[0]
 
-        # ------------------------------------------------------------------
-        # Page 1: overall histograms
-        # ------------------------------------------------------------------
-        fig, axes = plt.subplots(1, len(components), figsize=(5*len(components), 4.5))
-        if len(components) == 1:
-            axes = [axes]
-        fig.suptitle(f'Harmonic fit residuals (l_max={lmax}, rmax_sphere={args.rmax_sphere} cm)\n'
-                     f'{os.path.basename(args.fit)}', fontsize=10)
-        make_histogram_page(residuals, components, '', axes)
-        plt.tight_layout(rect=[0, 0, 1, 0.93])
-        pdf.savefig(fig); plt.close(fig)
+    def _save(fig, suffix):
+        _add_cms_label(fig, args)
+        plt.tight_layout(rect=[0, 0, 1, 1])
+        plot_tools.save_pdf_and_png(outdir, f'{stem}_{suffix}')
+        plt.close(fig)
 
-        # ------------------------------------------------------------------
-        # Page 2: profiles vs r
-        # ------------------------------------------------------------------
-        fig = plt.figure(figsize=(5*len(components), 4.5))
-        fig.suptitle(f'Residuals vs r  (l_max={lmax})', fontsize=10)
-        make_slice_page(fig, residuals, grid, components,
-                        r, r'$r$ [cm]', nbins=args.nbins)
-        pdf.savefig(fig); plt.close(fig)
+    # ------------------------------------------------------------------
+    # histograms — one figure per component (all points)
+    # ------------------------------------------------------------------
+    for comp in components:
+        fig, ax = plt.subplots(1, 1, figsize=(7, 6))
+        make_histogram_page(residuals, [comp], '', [ax])
+        _save(fig, f'hist_{comp}')
 
-        # ------------------------------------------------------------------
-        # Page 3: profiles vs z
-        # ------------------------------------------------------------------
-        fig = plt.figure(figsize=(5*len(components), 4.5))
-        fig.suptitle(f'Residuals vs z  (l_max={lmax})', fontsize=10)
-        make_slice_page(fig, residuals, grid, components,
-                        z, r'$z$ [cm]', nbins=args.nbins)
-        pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 4: profiles vs phi
-        # ------------------------------------------------------------------
-        fig = plt.figure(figsize=(5*len(components), 4.5))
-        fig.suptitle(f'Residuals vs $\\phi$  (l_max={lmax})', fontsize=10)
-        make_slice_page(fig, residuals, grid, components,
-                        phi, r'$\phi$ [rad]', nbins=args.nbins)
-        pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 5: profiles vs spherical R
-        # ------------------------------------------------------------------
-        fig = plt.figure(figsize=(5*len(components), 4.5))
-        fig.suptitle(f'Residuals vs spherical $R$  (l_max={lmax})', fontsize=10)
-        make_slice_page(fig, residuals, grid, components,
-                        R_sph, r'$R_{sph}$ [cm]', nbins=args.nbins)
-        pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 6: 2D maps in (r, z) for each component
-        # ------------------------------------------------------------------
-        fig, axes = plt.subplots(1, len(components), figsize=(6*len(components), 5))
-        if len(components) == 1:
-            axes = [axes]
-        fig.suptitle(f'Mean residual map in $(r, z)$  (l_max={lmax})', fontsize=10)
-        for ax, comp in zip(axes, components):
-            make_2d_map(ax, z, r, residuals[comp], comp, r'$z$ [cm]', r'$r$ [cm]')
-            ax.set_title(COMP_LABELS[comp])
-            add_tracker_boundaries(ax)
-            if not args.no_vol_boundaries:
-                add_volume_boundaries(ax, orientation='z-axis')
-        plt.tight_layout(rect=[0, 0, 1, 0.93])
-        pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 7: 2D maps in (phi, z)
-        # ------------------------------------------------------------------
-        fig, axes = plt.subplots(1, len(components), figsize=(6*len(components), 5))
-        if len(components) == 1:
-            axes = [axes]
-        fig.suptitle(f'Mean residual map in $(\phi, z)$  (l_max={lmax})', fontsize=10)
-        for ax, comp in zip(axes, components):
-            make_2d_map(ax, phi, z, residuals[comp], comp,
-                        r'$\phi$ [rad]', r'$z$ [cm]')
-            ax.set_title(COMP_LABELS[comp])
-            if not args.no_vol_boundaries:
-                add_volume_boundaries(ax, orientation='z-yaxis')
-        plt.tight_layout(rect=[0, 0, 1, 0.93])
-        pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 7b: 2D maps in (r, z) — tracker region only
-        # ------------------------------------------------------------------
-        tk = (r < TRACKER_OAE_RMAX) & (np.abs(z) < TRACKER_OAE_ZMAX)
-        if tk.sum() > 20:
-            fig, axes = plt.subplots(1, len(components), figsize=(6*len(components), 5))
-            if len(components) == 1:
-                axes = [axes]
-            fig.suptitle(
-                f'Mean residual map in $(r, z)$ — tracker region only '
-                f'(r<{TRACKER_OAE_RMAX:.0f} cm, |z|<{TRACKER_OAE_ZMAX:.0f} cm)  '
-                f'(l_max={lmax})', fontsize=10)
-            for ax, comp in zip(axes, components):
-                make_2d_map(ax, z[tk], r[tk], residuals[comp][tk], comp,
-                            r'$z$ [cm]', r'$r$ [cm]', nx=56, ny=23)
-                ax.set_xlim(-TRACKER_OAE_ZMAX, TRACKER_OAE_ZMAX)
-                ax.set_ylim(0, TRACKER_OAE_RMAX)
-                ax.set_title(COMP_LABELS[comp])
-                rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
-                ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
-                        transform=ax.transAxes, fontsize=8, va='top')
-                if not args.no_vol_boundaries:
-                    add_volume_boundaries(ax, orientation='z-axis')
-            plt.tight_layout(rect=[0, 0, 1, 0.90])
-            pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 7c: 2D maps in (phi, z) — tracker region only
-        # ------------------------------------------------------------------
-        if tk.sum() > 20:
-            fig, axes = plt.subplots(1, len(components), figsize=(6*len(components), 5))
-            if len(components) == 1:
-                axes = [axes]
-            fig.suptitle(
-                f'Mean residual map in $(\phi, z)$ — tracker region only '
-                f'(r<{TRACKER_OAE_RMAX:.0f} cm, |z|<{TRACKER_OAE_ZMAX:.0f} cm)  '
-                f'(l_max={lmax})', fontsize=10)
-            for ax, comp in zip(axes, components):
-                make_2d_map(ax, phi[tk], z[tk], residuals[comp][tk], comp,
-                            r'$\phi$ [rad]', r'$z$ [cm]', nx=36, ny=56)
-                ax.set_ylim(-TRACKER_OAE_ZMAX, TRACKER_OAE_ZMAX)
-                ax.set_title(COMP_LABELS[comp])
-                rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
-                ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
-                        transform=ax.transAxes, fontsize=8, va='top')
-                if not args.no_vol_boundaries:
-                    add_volume_boundaries(ax, orientation='z-yaxis')
-            plt.tight_layout(rect=[0, 0, 1, 0.90])
-            pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 8: 2D maps in (r, phi) — midplane only (|z| < 20 cm)
-        # ------------------------------------------------------------------
-        mid = np.abs(z) < 20
-        if mid.sum() > 10:
-            fig, axes = plt.subplots(1, len(components), figsize=(6*len(components), 5))
-            if len(components) == 1:
-                axes = [axes]
-            fig.suptitle(f'Mean residual map in $(r, \\phi)$, $|z|<20$ cm  (l_max={lmax})',
-                         fontsize=10)
-            for ax, comp in zip(axes, components):
-                make_2d_map(ax, phi[mid], r[mid], {comp: residuals[comp][mid]}[comp],
-                            comp, r'$\phi$ [rad]', r'$r$ [cm]', nx=36, ny=20)
-                ax.set_title(COMP_LABELS[comp])
-            plt.tight_layout(rect=[0, 0, 1, 0.93])
-            pdf.savefig(fig); plt.close(fig)
-
-        # ------------------------------------------------------------------
-        # Page 9: residuals in r shells (tracker, mid, outer, coil)
-        # ------------------------------------------------------------------
-        # Shell definitions: (r_lo, r_hi, z_max_or_None, label)
-        # The tracker shell applies both r<115 AND |z|<280 (OAE validity region).
-        r_shells = [
-            (0,   115, 280.0, 'tracker  r<115, |z|<280 cm'),
-            (115, 200, None,  '115<r<200 cm'),
-            (200, 280, None,  '200<r<280 cm'),
-            (280, 320, None,  '280<r<320 cm  (near coil)'),
-        ]
-
-        def _shell_mask(rlo, rhi, zmax):
-            m = (r >= rlo) & (r < rhi)
-            if zmax is not None:
-                m = m & (np.abs(z) < zmax)
-            return m
-
+    # ------------------------------------------------------------------
+    # histograms — tracker and outer regions separately
+    # ------------------------------------------------------------------
+    tk_mask    = (r < TRACKER_OAE_RMAX) & (np.abs(z) < TRACKER_OAE_ZMAX)
+    outer_mask = ~tk_mask
+    for region_mask, region_tag, region_label in [
+        (tk_mask,    'tracker', rf'$r<{TRACKER_OAE_RMAX:.0f}$ cm, $|z|<{TRACKER_OAE_ZMAX:.0f}$ cm'),
+        (outer_mask, 'outer',   rf'outer region'),
+    ]:
+        if region_mask.sum() < 10:
+            continue
+        region_residuals = {comp: residuals[comp][region_mask] for comp in components}
         for comp in components:
-            n_shell = sum(1 for rlo, rhi, zmax, _ in r_shells
-                          if _shell_mask(rlo, rhi, zmax).sum() > 10)
-            fig, axes = plt.subplots(1, n_shell, figsize=(5*n_shell, 4))
-            if n_shell == 1:
-                axes = [axes]
-            fig.suptitle(f'{COMP_LABELS[comp]} residuals in r shells  (l_max={lmax})',
-                         fontsize=10)
-            ax_idx = 0
-            for rlo, rhi, zmax, label in r_shells:
-                mask = _shell_mask(rlo, rhi, zmax)
-                if mask.sum() < 10:
-                    continue
-                ax = axes[ax_idx]; ax_idx += 1
-                res = residuals[comp][mask]
-                rms = np.sqrt(np.mean(res**2))
-                bins = np.linspace(-3*rms, 3*rms, 60)
-                ax.hist(res, bins=bins, color=COMP_COLORS[comp], alpha=0.75, density=True)
-                ax.axvline(0, color='k', lw=0.8, ls='--')
-                ax.axvline(np.mean(res), color='red', lw=1.0)
-                ax.set_title(f'{label}\nRMS={rms:.4f} mT  N={mask.sum():,}')
-                ax.set_xlabel(f'{COMP_LABELS[comp]} residual [mT]')
-                ax.set_ylabel('density')
-            plt.tight_layout(rect=[0, 0, 1, 0.93])
-            pdf.savefig(fig); plt.close(fig)
+            fig, ax = plt.subplots(1, 1, figsize=(7, 6))
+            make_histogram_page(region_residuals, [comp], '', [ax],
+                                region_label=region_label)
+            _save(fig, f'hist_{comp}_{region_tag}')
 
-    print(f"Done → {args.out}")
+    # ------------------------------------------------------------------
+    # profiles vs r, z, phi, R — one figure per (variable, component)
+    # ------------------------------------------------------------------
+    for var, xlabel, suffix in [
+        (r,     r'$r$ [cm]',       'vs_r'),
+        (z,     r'$z$ [cm]',       'vs_z'),
+        (phi,   r'$\phi$ [rad]',   'vs_phi'),
+        (R_sph, r'$R_{sph}$ [cm]', 'vs_R'),
+    ]:
+        for comp in components:
+            fig, ax = plt.subplots(1, 1, figsize=(7, 6))
+            slice_plot(ax, var, residuals[comp], xlabel, comp, nbins=args.nbins)
+            _save(fig, f'{suffix}_{comp}')
+
+    # ------------------------------------------------------------------
+    # profiles vs r, z, phi, R — tracker and outer regions separately
+    # ------------------------------------------------------------------
+    tk_mask   = (r < TRACKER_OAE_RMAX) & (np.abs(z) < TRACKER_OAE_ZMAX)
+    outer_mask = ~tk_mask
+    for var, xlabel, suffix in [
+        (r,     r'$r$ [cm]',       'vs_r'),
+        (z,     r'$z$ [cm]',       'vs_z'),
+        (phi,   r'$\phi$ [rad]',   'vs_phi'),
+        (R_sph, r'$R_{sph}$ [cm]', 'vs_R'),
+    ]:
+        for region_mask, region_tag in [(tk_mask, 'tracker'), (outer_mask, 'outer')]:
+            if region_mask.sum() < 10:
+                continue
+            for comp in components:
+                fig, ax = plt.subplots(1, 1, figsize=(7, 6))
+                slice_plot(ax, var[region_mask], residuals[comp][region_mask],
+                           xlabel, comp, nbins=args.nbins)
+                _save(fig, f'{suffix}_{comp}_{region_tag}')
+
+    # ------------------------------------------------------------------
+    # 2D maps in (r, z) — one figure per component
+    # ------------------------------------------------------------------
+    for comp in components:
+        fig, ax = plt.subplots(1, 1, figsize=(9, 6.5))
+        make_2d_map(ax, z, r, residuals[comp], comp, r'$z$ [cm]', r'$r$ [cm]')
+        ax.text(1.0, 1.0, COMP_LABELS[comp], ha='right', va='bottom', transform=ax.transAxes)
+        add_tracker_boundaries(ax)
+        _save(fig, f'map_rz_{comp}')
+
+    # ------------------------------------------------------------------
+    # 2D maps in (phi, z) — one figure per component
+    # ------------------------------------------------------------------
+    for comp in components:
+        fig, ax = plt.subplots(1, 1, figsize=(9, 6.5))
+        make_2d_map(ax, phi, z, residuals[comp], comp, r'$\phi$ [rad]', r'$z$ [cm]')
+        ax.text(1.0, 1.0, COMP_LABELS[comp], ha='right', va='bottom', transform=ax.transAxes)
+        _save(fig, f'map_phiz_{comp}')
+
+    # ------------------------------------------------------------------
+    # 2D maps in (r, z) — tracker region only, one figure per component
+    # ------------------------------------------------------------------
+    tk = (r < TRACKER_OAE_RMAX) & (np.abs(z) < TRACKER_OAE_ZMAX)
+    if tk.sum() > 20:
+        for comp in components:
+            fig, ax = plt.subplots(1, 1, figsize=(9, 6.5))
+            make_2d_map(ax, z[tk], r[tk], residuals[comp][tk], comp,
+                        r'$z$ [cm]', r'$r$ [cm]', nx=56, ny=23)
+            ax.set_xlim(-TRACKER_OAE_ZMAX, TRACKER_OAE_ZMAX)
+            ax.set_ylim(0, TRACKER_OAE_RMAX)
+            ax.text(1.0, 1.0, COMP_LABELS[comp], ha='right', va='bottom', transform=ax.transAxes)
+            rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
+            ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
+                    transform=ax.transAxes, fontsize='small', va='top')
+            _save(fig, f'map_rz_tracker_{comp}')
+
+    # ------------------------------------------------------------------
+    # 2D maps in (phi, z) — tracker region only, one figure per component
+    # ------------------------------------------------------------------
+    if tk.sum() > 20:
+        for comp in components:
+            fig, ax = plt.subplots(1, 1, figsize=(9, 6.5))
+            make_2d_map(ax, phi[tk], z[tk], residuals[comp][tk], comp,
+                        r'$\phi$ [rad]', r'$z$ [cm]', nx=36, ny=56)
+            ax.set_ylim(-TRACKER_OAE_ZMAX, TRACKER_OAE_ZMAX)
+            ax.text(1.0, 1.0, COMP_LABELS[comp], ha='right', va='bottom', transform=ax.transAxes)
+            rms_tk = np.sqrt(np.mean(residuals[comp][tk]**2))
+            ax.text(0.02, 0.97, f'RMS={rms_tk:.4f} mT  N={tk.sum():,}',
+                    transform=ax.transAxes, fontsize='small', va='top')
+            _save(fig, f'map_phiz_tracker_{comp}')
+
+    # ------------------------------------------------------------------
+    # 2D maps in (r, phi) — midplane |z| < 20 cm, one figure per component
+    # ------------------------------------------------------------------
+    mid = np.abs(z) < 20
+    if mid.sum() > 10:
+        for comp in components:
+            fig, ax = plt.subplots(1, 1, figsize=(9, 6.5))
+            make_2d_map(ax, phi[mid], r[mid], residuals[comp][mid],
+                        comp, r'$\phi$ [rad]', r'$r$ [cm]', nx=36, ny=20)
+            ax.text(1.0, 1.0, COMP_LABELS[comp], ha='right', va='bottom', transform=ax.transAxes)
+            _save(fig, f'map_rphi_{comp}')
+
+    # ------------------------------------------------------------------
+    # shell histograms — one figure per component
+    # ------------------------------------------------------------------
+    r_shells = [
+        (0,   115, 280.0, 'tracker  r<115, |z|<280 cm'),
+        (115, 200, None,  '115<r<200 cm'),
+        (200, 280, None,  '200<r<280 cm'),
+        (280, 320, None,  '280<r<320 cm  (near coil)'),
+    ]
+
+    def _shell_mask(rlo, rhi, zmax):
+        m = (r >= rlo) & (r < rhi)
+        if zmax is not None:
+            m = m & (np.abs(z) < zmax)
+        return m
+
+    for comp in components:
+        for rlo, rhi, zmax, label in r_shells:
+            mask = _shell_mask(rlo, rhi, zmax)
+            if mask.sum() < 10:
+                continue
+            fig, ax = plt.subplots(1, 1, figsize=(7, 5.5))
+            res = residuals[comp][mask]
+            rms = np.sqrt(np.mean(res**2))
+            bins = np.linspace(-3*rms, 3*rms, 60)
+            ax.hist(res, bins=bins, color=COMP_COLORS[comp], alpha=0.75, density=True)
+            ax.axvline(0, color='k', lw=0.8, ls='--')
+            ax.axvline(np.mean(res), color='red', lw=1.0)
+            ax.text(0.5, 0.97, label, ha='center', va='top',
+                    transform=ax.transAxes, fontsize='small')
+            ax.text(0.02, 0.80, f'RMS={rms:.4f} mT\nN={mask.sum():,}',
+                    transform=ax.transAxes, va='top', fontsize='small')
+            ax.set_xlabel('residual [mT]')
+            ax.set_ylabel('density')
+            ax.text(1.0, 1.0, COMP_LABELS[comp], ha='right', va='bottom', transform=ax.transAxes)
+            shell_tag = f'{rlo}_{rhi}'
+            _save(fig, f'shell_{comp}_{shell_tag}')
+
+    output_tools.write_index_and_log(outdir, stem, args=args)
+    print(f"Done → {outdir}")
 
 
 if __name__ == '__main__':

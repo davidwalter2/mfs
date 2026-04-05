@@ -24,6 +24,10 @@ from harmonic_basis import build_design_matrix, param_list
 from cylindrical_basis import build_design_matrix_cyl, parse_mode_label
 from cylindrical_bessel_basis import build_design_matrix_cjb
 import zernike_basis
+import os
+import mplhep as hep
+from wums import output_tools, plot_tools
+hep.style.use(hep.style.ROOT)
 
 
 def build_block_boundaries(l_max):
@@ -40,7 +44,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--fit',  required=True, help='Input .npz fit file')
     ap.add_argument('--grid', required=True, help='Field grid .txt file')
-    ap.add_argument('--out',  default='corr.pdf', help='Output file')
+    ap.add_argument('--title', default='CMS', help='Experiment label (default: %(default)s)')
+    ap.add_argument('--subtitle', default='Simulation', help='Subtitle (default: %(default)s)')
+    ap.add_argument('--titlePos', type=int, default=0, help='Title position 0-4 (default: %(default)s)')
+    ap.add_argument('-o', '--outpath', default='.', help='Output directory')
     args = ap.parse_args()
 
     # ── load fit metadata ────────────────────────────────────────────────────
@@ -117,6 +124,21 @@ def main():
     n_params = C.shape[0]
     print(f'Correlation matrix: {n_params}x{n_params}')
 
+    # ── reorder modes so same-group modes are contiguous ─────────────────────
+    # The design matrix column order may interleave modes from different l/n
+    # groups. Sort by (group_key, subkey) so the correlation matrix has clean
+    # diagonal blocks when visualised.
+    if basis_type in ('cylindrical', 'bessel'):
+        sort_key = lambda i: (modes_rebuilt[i][0], modes_rebuilt[i][1], modes_rebuilt[i][2], modes_rebuilt[i][3])
+    elif basis_type == 'zernike':
+        sort_key = lambda i: (modes_rebuilt[i][0], modes_rebuilt[i][1], modes_rebuilt[i][2], modes_rebuilt[i][3])
+    else:  # harmonic: (l, m, cs)
+        cs_order = {'c': 0, 's': 1}
+        sort_key = lambda i: (modes_rebuilt[i][0], modes_rebuilt[i][1], cs_order.get(modes_rebuilt[i][2], 0))
+    perm = sorted(range(n_params), key=sort_key)
+    C = C[np.ix_(perm, perm)]
+    modes_rebuilt = [modes_rebuilt[i] for i in perm]
+
     # ── block boundaries for axis labelling ──────────────────────────────────
     if basis_type in ('cylindrical', 'bessel'):
         # Group by n (wavenumber index)
@@ -170,35 +192,38 @@ def main():
         tick_fmt = lambda v: f'$\\ell={v}$'
 
     # ── plot ──────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(14, 12))
 
     im = ax.imshow(C, origin='upper', aspect='equal',
                    cmap='RdBu_r', vmin=-1, vmax=1, interpolation='nearest')
+
+    # Fix MAXTICKS: ROOT style enables AutoMinorLocator which generates O(1000) ticks on
+    # a 360-element image axis; replace with FixedLocator + NullLocator immediately after imshow
+    ax.xaxis.set_major_locator(plot_tools.ticker.FixedLocator(tick_positions))
+    ax.yaxis.set_major_locator(plot_tools.ticker.FixedLocator(tick_positions))
+    ax.xaxis.set_minor_locator(plot_tools.ticker.NullLocator())
+    ax.yaxis.set_minor_locator(plot_tools.ticker.NullLocator())
 
     for start in block_starts[1:]:
         ax.axvline(start - 0.5, color='black', lw=0.4, alpha=0.5)
         ax.axhline(start - 0.5, color='black', lw=0.4, alpha=0.5)
 
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels([tick_fmt(v) for v in block_labels], fontsize=7, rotation=90)
-    ax.set_yticks(tick_positions)
-    ax.set_yticklabels([tick_fmt(v) for v in block_labels], fontsize=7)
+    ax.set_xticklabels([tick_fmt(v) for v in block_labels], rotation=90)
+    ax.set_yticklabels([tick_fmt(v) for v in block_labels])
 
-    ax.set_xlabel(xlabel, fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
-    ax.set_title(
-        f'Parameter correlation matrix  —  {args.fit}\n'
-        f'{title_extra},  {n_params} parameters,  {n} grid points,  '
-        f'components: {", ".join(components)}',
-        fontsize=10)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
 
     cbar = fig.colorbar(im, ax=ax, pad=0.02, shrink=0.85)
-    cbar.set_label('correlation', fontsize=11)
-    cbar.ax.tick_params(labelsize=10)
+    cbar.set_label('correlation')
 
     fig.tight_layout()
-    fig.savefig(args.out, dpi=150, bbox_inches='tight')
-    print(f'Written → {args.out}')
+    plot_tools.add_decor(ax, args.title, args.subtitle, data=False, lumi=None, loc=args.titlePos, no_energy=True)
+    outdir = output_tools.make_plot_dir(args.outpath)
+    stem = os.path.splitext(os.path.basename(args.fit))[0]
+    outfile = f'corr_{stem}'
+    plot_tools.save_pdf_and_png(outdir, outfile)
+    output_tools.write_index_and_log(outdir, outfile, args=args)
 
 
 if __name__ == '__main__':
